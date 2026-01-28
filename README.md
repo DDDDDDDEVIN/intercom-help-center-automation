@@ -1,0 +1,1 @@
+# intercom-help-center-automation
