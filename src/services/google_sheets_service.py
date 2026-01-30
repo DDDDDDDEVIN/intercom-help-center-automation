@@ -96,18 +96,22 @@ class GoogleSheetsService:
 
     def log_processed_item(
         self,
-        tableau_name: str,
+        original_name: str,
         human_name: str,
         intercom_url: str,
+        intercom_id: str,
+        html: str,
         sheet_name: str = 'data_dictionary'
     ) -> Dict:
         """
-        Log a processed data field to Google Sheets
+        Log a processed item to Google Sheets with 5 columns
 
         Args:
-            tableau_name: The Tableau field name
-            human_name: The human-readable field name
+            original_name: The original name before any formatting
+            human_name: The human-readable name (after formatting)
             intercom_url: The Intercom article URL
+            intercom_id: The Intercom article ID
+            html: The complete HTML content
             sheet_name: The sheet name to write to
 
         Returns:
@@ -116,9 +120,11 @@ class GoogleSheetsService:
         # Prepare payload for Google Sheet
         payload = {
             "sheet_name": sheet_name,
-            "col1": tableau_name.strip(),
-            "col2": human_name.strip(),
-            "col3": intercom_url.strip()
+            "original_name": original_name.strip(),
+            "human_name": human_name.strip(),
+            "intercom_url": intercom_url.strip(),
+            "intercom_id": str(intercom_id).strip(),
+            "HTML": html
         }
 
         try:
@@ -133,7 +139,7 @@ class GoogleSheetsService:
             if response.status_code == 200:
                 return {
                     'status': 'success',
-                    'message': f'Saved to {sheet_name}: {tableau_name}',
+                    'message': f'Saved to {sheet_name}: {original_name}',
                     'saved_data': payload
                 }
             else:
@@ -147,55 +153,6 @@ class GoogleSheetsService:
             return {
                 'status': 'error',
                 'message': f"Failed to log to Google Sheets: {str(e)}"
-            }
-
-    def log_chart(
-        self,
-        chart_name: str,
-        intercom_url: str,
-        sheet_name: str = 'chart_library'
-    ) -> Dict:
-        """
-        Log a processed chart to Google Sheets
-
-        Args:
-            chart_name: The chart name
-            intercom_url: The Intercom article URL
-            sheet_name: The sheet name to write to
-
-        Returns:
-            Dictionary with save status
-        """
-        # Prepare payload
-        payload = {
-            "sheet_name": sheet_name,
-            "col1": chart_name.strip(),
-            "col2": intercom_url.strip()
-        }
-
-        try:
-            response = requests.post(
-                self.sheet_api_url,
-                json=payload,
-                allow_redirects=True,
-                timeout=30
-            )
-
-            if response.status_code == 200:
-                return {
-                    'status': 'success',
-                    'message': f'Saved to {sheet_name}: {chart_name}'
-                }
-            else:
-                return {
-                    'status': 'error',
-                    'message': f'API Error: {response.status_code}'
-                }
-
-        except requests.exceptions.RequestException as e:
-            return {
-                'status': 'error',
-                'message': f"Failed to log chart: {str(e)}"
             }
 
     def batch_lookup(self, search_list: List[str], sheet_name: str = 'data_dictionary') -> Dict:
@@ -247,19 +204,25 @@ class GoogleSheetsService:
             }
 
         # Build lookup map (O(1) lookup speed)
-        # Assuming sheet columns: [Tableau Name, Human Name, Intercom URL]
+        # Assuming sheet columns: [original_name, human_name, intercom_url, intercom_id, HTML]
         lookup_map = {}
 
         for row in all_rows:
             if len(row) >= 3:
-                t_name = str(row[0]).strip()  # Tableau Name (Key)
-                h_name = str(row[1]).strip()  # Human Name
-                i_url = str(row[2]).strip()   # Intercom URL
+                t_name = str(row[0]).strip()  # original_name (Key)
+                h_name = str(row[1]).strip()  # human_name
+                i_url = str(row[2]).strip()   # intercom_url
 
                 lookup_map[t_name] = {
                     'human_name': h_name,
                     'url': i_url
                 }
+
+                # Store additional fields if available
+                if len(row) >= 4:
+                    lookup_map[t_name]['intercom_id'] = str(row[3]).strip()
+                if len(row) >= 5:
+                    lookup_map[t_name]['html'] = row[4]
 
         # Match each item in search list
         found_urls = []

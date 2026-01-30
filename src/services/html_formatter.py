@@ -243,8 +243,8 @@ class HTMLFormatter:
         accuracy: str,
         chart_json: Dict,
         field_mapping: Dict[str, Dict[str, str]],
-        related_article_names: List[str] = None,
-        related_article_urls: List[str] = None
+        related_charts_names: List[str] = None,
+        related_charts_urls: List[str] = None
     ) -> str:
         """
         Format chart HTML with detailed JSON structure and linked fields
@@ -260,8 +260,8 @@ class HTMLFormatter:
             accuracy: Accuracy notes (deprecated, not displayed)
             chart_json: JSON with Vertical, Horizontal, Dimensions, Measures
             field_mapping: Dict mapping tableau_name to {human, url}
-            related_article_names: List of related article names (optional)
-            related_article_urls: List of related article URLs (optional)
+            related_charts_names: List of related chart names (optional)
+            related_charts_urls: List of related chart URLs (optional)
 
         Returns:
             Formatted HTML string
@@ -356,14 +356,14 @@ class HTMLFormatter:
         html_parts.append(f'<p><strong>Measures:</strong> {measures_str}</p>')
         html_parts.append(self.spacer)
 
-        # Related Articles (new section)
-        if related_article_names and related_article_urls:
+        # Related Charts (new section)
+        if related_charts_names and related_charts_urls:
             # Ensure both lists have same length
-            if len(related_article_names) == len(related_article_urls):
-                html_parts.append('<p><strong>Related Articles:</strong></p>')
+            if len(related_charts_names) == len(related_charts_urls):
+                html_parts.append('<p><strong>Related Charts:</strong></p>')
                 html_parts.append('<ul>')
 
-                for name, url in zip(related_article_names, related_article_urls):
+                for name, url in zip(related_charts_names, related_charts_urls):
                     if name and url:
                         html_parts.append(f'<li><a href="{url}" target="_blank">{name}</a></li>')
                     elif name:
