@@ -255,6 +255,9 @@ class WorkflowOrchestrator:
             print(f"{'='*60}\n")
 
             for idx, chart in enumerate(cleaned_data['charts'], 1):
+                # Store original name before case change
+                original_chart_name = chart['title']
+
                 # Apply smart title case formatting to chart title
                 chart['title'] = self._smart_chart_title(chart['title'])
 
@@ -262,7 +265,12 @@ class WorkflowOrchestrator:
                 print("-" * 50)
 
                 try:
-                    result = self._process_single_chart(chart, xml_cleaner, cleaned_data['category'])
+                    result = self._process_single_chart(
+                        chart,
+                        xml_cleaner,
+                        cleaned_data['category'],
+                        original_chart_name
+                    )
 
                     if result['status'] == 'skipped':
                         skipped_charts.append({
@@ -323,9 +331,11 @@ class WorkflowOrchestrator:
 
                         # Log to article_library
                         log_result = self.google_sheets_service.log_processed_item(
-                            tableau_name=cleaned_data['article_title'],
+                            original_name=cleaned_data['article_title'],
                             human_name=cleaned_data['article_title'],
                             intercom_url=article_intercom_url,
+                            intercom_id=article_result['article_id'],
+                            html=article_html,
                             sheet_name=self.google_sheets_article_library_sheet
                         )
                         print(f"✓ Article logged to Google Sheets")
@@ -338,7 +348,7 @@ class WorkflowOrchestrator:
                         for chart_result in processed_charts:
                             if chart_result['status'] == 'success' and chart_result.get('chart_article_id'):
                                 try:
-                                    # Regenerate chart HTML with related article URL
+                                    # Regenerate chart HTML with related charts (currently blank)
                                     updated_chart_html = self.html_formatter.format_chart_with_json_html(
                                         chart_name=chart_result['chart']['title'],
                                         image_url=chart_result['chart']['image_url'],
@@ -350,8 +360,8 @@ class WorkflowOrchestrator:
                                         accuracy='TBC',
                                         chart_json=chart_result.get('chart_json', {}),
                                         field_mapping=chart_result.get('field_mapping', {}),
-                                        related_article_names=[cleaned_data['article_title']],
-                                        related_article_urls=[article_intercom_url]
+                                        related_charts_names=None,
+                                        related_charts_urls=None
                                     )
 
                                     # Update the chart article
@@ -406,7 +416,7 @@ class WorkflowOrchestrator:
             print(f"\n✗ Workflow failed: {str(e)}")
             raise
 
-    def _process_single_chart(self, chart: Dict, xml_cleaner: TableauXMLCleaner, category: str) -> Dict[str, Any]:
+    def _process_single_chart(self, chart: Dict, xml_cleaner: TableauXMLCleaner, category: str, original_chart_name: str) -> Dict[str, Any]:
         """
         Process a single chart through all steps
 
@@ -428,7 +438,7 @@ class WorkflowOrchestrator:
         # Step 1: Duplicate Check
         print(f"  [1/6] Checking for duplicates...")
         duplicate_check = self.google_sheets_service.check_duplicate(
-            lookup_name=chart['view_id'],
+            lookup_name=original_chart_name,
             sheet_name=self.google_sheets_chart_library_sheet
         )
 
@@ -628,8 +638,7 @@ class WorkflowOrchestrator:
             chart_json = self._clean_chart_json_fields(chart_json)
 
             # Create detailed chart HTML
-            # Note: related_article lists are None during initial creation
-            # Charts are updated later with the related article links after article creation
+            # Note: related_charts lists are None (blank for now)
             chart_html = self.html_formatter.format_chart_with_json_html(
                 chart_name=chart['title'],
                 image_url=chart['image_url'],
@@ -641,8 +650,8 @@ class WorkflowOrchestrator:
                 accuracy='TBC',  # Kept for backward compatibility but not displayed
                 chart_json=chart_json,
                 field_mapping=field_mapping,
-                related_article_names=None,  # Will be updated after article creation
-                related_article_urls=None
+                related_charts_names=None,  # Blank for now
+                related_charts_urls=None
             )
 
             # Publish to CHART collection
@@ -660,9 +669,12 @@ class WorkflowOrchestrator:
                 print(f"  ✓ Chart article published: {chart_intercom_url}")
 
                 # Log to chart_library
-                log_result = self.google_sheets_service.log_chart(
-                    chart_name=chart['title'],
+                log_result = self.google_sheets_service.log_processed_item(
+                    original_name=original_chart_name,
+                    human_name=chart['title'],
                     intercom_url=chart_intercom_url,
+                    intercom_id=chart_article_id,
+                    html=chart_html,
                     sheet_name=self.google_sheets_chart_library_sheet
                 )
                 print(f"  ✓ Chart logged to Google Sheets")
@@ -779,9 +791,11 @@ class WorkflowOrchestrator:
         # Step 6: Log to Google Sheets
         print(f"      [6/6] Logging to Google Sheets...")
         log_result = self.google_sheets_service.log_processed_item(
-            tableau_name=field_name,
+            original_name=field_name,
             human_name=human_name,
             intercom_url=intercom_result['article_url'],
+            intercom_id=intercom_result['article_id'],
+            html=html_content,
             sheet_name=self.google_sheets_data_dict_sheet
         )
 
