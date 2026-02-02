@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Joomla Articles - Intercom Publisher</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Joomla Articles</h1>
+            <p>Select articles to publish to Intercom Help Center</p>
+        </header>
+
+        <div class="actions">
+            <button id="refreshBtn" class="btn btn-secondary">Refresh Articles</button>
+            <button id="selectAllBtn" class="btn btn-secondary">Select All</button>
+            <button id="deselectAllBtn" class="btn btn-secondary">Deselect All</button>
+            <button id="publishBtn" class="btn btn-primary">Publish Selected</button>
+        </div>
+
+        <div id="loading" class="loading" style="display: none;">
+            Loading articles...
+        </div>
+
+        <div id="articleList" class="article-list">
+            <!-- Articles will be loaded here dynamically -->
+        </div>
+
+        <div id="statusPanel" class="status-panel" style="display: none;">
+            <h3>Processing Status</h3>
+            <div id="statusList"></div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
