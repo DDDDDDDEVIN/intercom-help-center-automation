@@ -150,6 +150,75 @@ header p {
     font-size: 13px;
 }
 
+/* Nested category structure */
+.category-group {
+    margin: 10px 0;
+}
+
+.category-header {
+    cursor: pointer;
+    padding: 12px 15px;
+    background: #f5f5f5;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 16px;
+    color: #333;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: background 0.2s;
+    user-select: none;
+}
+
+.category-header:hover {
+    background: #e8e8e8;
+}
+
+.expand-icon {
+    font-size: 12px;
+    color: #666;
+    transition: transform 0.2s;
+    width: 16px;
+    text-align: center;
+}
+
+.category-name {
+    flex: 1;
+}
+
+.category-content {
+    padding-top: 5px;
+    transition: all 0.3s ease;
+}
+
+.category-content.collapsed {
+    display: none;
+}
+
+/* Nested article indentation */
+.category-group .article-item {
+    border-left: 2px solid #e0e0e0;
+    margin-left: 20px;
+    padding-left: 15px;
+}
+
+/* Different colors for depth levels */
+.category-group .category-header {
+    border-left: 4px solid #2196f3;
+}
+
+.category-group .category-group .category-header {
+    border-left: 4px solid #4caf50;
+}
+
+.category-group .category-group .category-group .category-header {
+    border-left: 4px solid #ff9800;
+}
+
+.category-group .category-group .category-group .category-group .category-header {
+    border-left: 4px solid #9c27b0;
+}
+
 .status-panel {
     background: white;
     padding: 20px;

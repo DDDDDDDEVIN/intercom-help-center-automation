@@ -106,19 +106,88 @@ class JoomlaService:
 
             # Remove duplicates and sort
             target_ids = sorted(list(set(target_ids)))
-            print(f"[Joomla] Found {len(target_ids)} Global category IDs: {target_ids[:10]}..." if len(target_ids) > 10 else f"[Joomla] Found {len(target_ids)} Global category IDs: {target_ids}")
-
-            # Debug: Print all category names
-            print("[Joomla] DEBUG - Category names included:")
-            for cat_id in target_ids:
-                cat_name = category_names.get(str(cat_id), 'Unknown')
-                print(f"  - ID {cat_id}: {cat_name}")
+            print(f"[Joomla] Found {len(target_ids)} Global category IDs")
 
             return target_ids, category_names
 
         except requests.exceptions.RequestException as e:
             print(f"[Joomla] Error fetching categories: {str(e)}")
             return [root_category_id], {root_category_id: "Global"}  # Fallback to just root category
+
+    def _parse_category_path(self, category_name: str) -> list:
+        """
+        Parse category name into hierarchical path.
+
+        Example: "Global-PV-Prices-Systems" → ['PV', 'Prices', 'Systems']
+        Example: "Global-ESS-RAAG Characteristics" → ['ESS', 'Brand Assessor', 'Characteristics']
+        """
+        if not category_name or not category_name.startswith('Global-'):
+            return []
+
+        # Remove "Global-" prefix
+        parts = category_name[7:].split('-')
+
+        # Apply mappings
+        path = []
+        for i, part in enumerate(parts):
+            part_lower = part.lower()
+
+            # Map sections
+            if part_lower == 'products':
+                path.append('Product Characteristics')
+            elif part_lower == 'raag':
+                path.append('Brand Assessor')
+            elif part_lower == 'tools' and i > 0:
+                # Tools is usually a detail level, map to Brand Assessor
+                path.append('Brand Assessor')
+            else:
+                path.append(part)
+
+        return path
+
+    def _build_nested_structure(self, articles: list) -> dict:
+        """
+        Organize articles into nested structure based on category hierarchy.
+
+        Returns nested dictionary where articles are organized by their path:
+        {
+            'PV': {
+                'Prices': {
+                    'Systems': {
+                        'articles': [article1, article2, ...]
+                    }
+                }
+            }
+        }
+        """
+        nested = {}
+
+        for article in articles:
+            category_name = article.get('category_name', '')
+            path = self._parse_category_path(category_name)
+
+            # If no valid path or doesn't start with PV/ESS, put in "Other" category
+            if not path or (path and path[0] not in ['PV', 'ESS']):
+                if 'Other' not in nested:
+                    nested['Other'] = {}
+                if 'articles' not in nested['Other']:
+                    nested['Other']['articles'] = []
+                nested['Other']['articles'].append(article)
+                continue
+
+            # Navigate/create nested structure
+            current = nested
+            for component in path:
+                if component not in current:
+                    current[component] = {}
+                current = current[component]
+
+            # Add articles list at leaf level
+            if 'articles' not in current:
+                current['articles'] = []
+            current['articles'].append(article)
+
+        return nested
 
     def get_all_published_articles(self, limit: int = 500, offset: int = 0, category_id: str = None) -> Dict[str, Any]:
         """
@@ -219,19 +288,19 @@ class JoomlaService:
                     'category_name': category_name
                 })
 
-            # Debug: Print article count per category
-            print(f"[Joomla] DEBUG - Fetched {len(articles)} total articles")
-            print("[Joomla] DEBUG - Articles per category:")
-            for cat_id, info in sorted(category_article_count.items(), key=lambda x: x[1]['count'], reverse=True):
-                print(f"  - ID {cat_id} ({info['name']}): {info['count']} articles")
+            print(f"[Joomla] Fetched {len(articles)} articles from Global categories")
 
             # Get pagination info
             meta = data.get('meta', {})
             total_pages = meta.get('total-pages', 1)
 
+            # Build nested structure
+            nested_structure = self._build_nested_structure(articles)
+
             return {
                 'status': 'success',
                 'articles': articles,
+                'nested_structure': nested_structure,
                 'total_pages': total_pages,
                 'current_page': (offset // limit) + 1,
                 'total_count': len(articles)
