@@ -124,6 +124,104 @@ def get_joomla_articles():
         }), 500
 
 
+def filter_gpt_prompts(html_content):
+    """
+    Remove GPT prompts and extract generated content from data-gpt attributes
+
+    1. Removes prompt text between "GPT PROMPT" and "END GPT (with replace)"
+    2. Extracts content from data-gpt attributes and makes it visible
+    3. Removes SunWiz License Terms and other junk endings
+    """
+    import re
+    import html as html_module
+
+    # Remove GPT prompts (pattern from html_cleaner.py line 84)
+    html_content = re.sub(r'GPT PROMPT.*?END GPT \(with replace\)', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+
+    # Remove horizontal rules
+    html_content = re.sub(r'<hr[^>]*>', '', html_content, flags=re.IGNORECASE)
+
+    # Remove SunWiz License Terms & Conditions and other junk endings
+    # Based on JUNK_ENDINGS from html_cleaner.py
+    junk_endings = [
+        "SunWiz License Terms", "Ownership Rights", "Quick Summary",
+        "You MAY:", "Copyright", "Disclaimer", "Commentary by AI",
+        "Interpreting this data", "Applying this data", "Key Insights",
+        "Analysis:", "Recommendations:", "Next Steps:"
+    ]
+
+    # Find the earliest occurrence of any junk ending keyword
+    cutoff_index = len(html_content)
+    for keyword in junk_endings:
+        # Case-insensitive search
+        pattern = re.escape(keyword)
+        match = re.search(pattern, html_content, re.IGNORECASE)
+        if match and match.start() < cutoff_index:
+            cutoff_index = match.start()
+
+    # Cut off content at the earliest junk ending
+    html_content = html_content[:cutoff_index]
+
+    # Extract and display content from data-gpt attributes
+    # Pattern matches complete opening tag with data-gpt attribute: <tag ... data-gpt="content" ... >
+    gpt_pattern = r'(<[^>]+\s+data-gpt=(["\'])(.*?)\2[^>]*>)'
+
+    def extract_gpt_content(match):
+        full_opening_tag = match.group(1)  # Complete opening tag with all attributes
+        gpt_content = match.group(3)
+
+        # Unescape HTML entities and clean whitespace
+        clean_content = html_module.unescape(gpt_content).strip()
+        # Normalize whitespace (collapse multiple spaces/newlines)
+        clean_content = re.sub(r'\s+', ' ', clean_content)
+
+        # Return original tag + visible content after it (no background styling)
+        return f'{full_opening_tag}<div class="gpt-generated-content">{clean_content}</div>'
+
+    html_content = re.sub(gpt_pattern, extract_gpt_content, html_content, flags=re.DOTALL)
+
+    return html_content
+
+
+@app.route('/api/joomla/articles/<article_id>', methods=['GET'])
+def get_article_preview(article_id):
+    """
+    Fetch full article content for preview
+
+    Returns:
+        JSON with article content and metadata
+    """
+    try:
+        # Fetch full article from Joomla
+        article_data = orchestrator.joomla_service.download_article(article_id)
+
+        # Extract fields
+        raw_html = article_data.get('raw_html', '')
+
+        # Filter out GPT prompts, keep only generated content
+        cleaned_html = filter_gpt_prompts(raw_html)
+
+        # Create excerpt (first 1000 characters of cleaned text)
+        # Remove HTML tags for excerpt
+        import re
+        text_only = re.sub(r'<[^>]+>', '', cleaned_html)
+        excerpt = text_only[:1000].strip() + ('...' if len(text_only) > 1000 else '')
+
+        return jsonify({
+            'status': 'success',
+            'article_id': article_id,
+            'title': article_data.get('article_title', 'Untitled'),
+            'raw_html': cleaned_html,
+            'excerpt': excerpt
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
 @app.route('/api/articles/create', methods=['POST'])
 def create_articles():
     """

@@ -219,6 +219,146 @@ header p {
     border-left: 4px solid #9c27b0;
 }
 
+/* Article preview styles */
+.article-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.preview-btn {
+    padding: 4px 12px;
+    background: #0066ff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.2s;
+    white-space: nowrap;
+}
+
+.preview-btn:hover {
+    background: #0052cc;
+}
+
+.article-preview {
+    margin-top: 10px;
+    padding: 10px;
+    background: #f9f9f9;
+    border: none;
+    border-radius: 4px;
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+
+.article-preview.collapsed {
+    display: none;
+}
+
+.preview-loading {
+    color: #666;
+    font-style: italic;
+    padding: 20px;
+    text-align: center;
+}
+
+.preview-error {
+    color: #d32f2f;
+    padding: 20px;
+    text-align: center;
+    background: #ffebee;
+    border-radius: 4px;
+}
+
+.preview-content {
+    background: white;
+    border-radius: 4px;
+    border: none;
+    overflow: hidden;
+}
+
+.preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    background: #f5f5f5;
+    border: none;
+}
+
+.preview-header h3 {
+    margin: 0;
+    font-size: 18px;
+    color: #333;
+}
+
+.preview-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: #666;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: background 0.2s;
+}
+
+.preview-close:hover {
+    background: #e0e0e0;
+}
+
+.preview-body {
+    padding: 15px;
+    max-height: none;
+    overflow-y: visible;
+}
+
+/* Style the preview content */
+.preview-body img {
+    max-width: 100%;
+    height: auto;
+}
+
+.preview-body table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 10px 0;
+}
+
+.preview-body table td,
+.preview-body table th {
+    border: none;
+    padding: 6px;
+}
+
+.preview-body table th {
+    background: #f5f5f5;
+    font-weight: bold;
+}
+
+/* GPT generated content styling */
+.gpt-generated-content {
+    margin: 5px 0;
+    padding: 0;
+    line-height: 1.5;
+    background: none;
+    border: none;
+}
+
+/* Compact content boxes */
+.preview-body div,
+.preview-body p {
+    margin: 5px 0;
+    padding: 0;
+}
+
 .status-panel {
     background: white;
     padding: 20px;

@@ -1,6 +1,7 @@
 let articles = [];
 let selectedArticles = new Set();
 let currentNestedStructure = null;  // Store nested structure for re-rendering
+let loadedPreviews = new Set();  // Track which previews have been loaded
 
 // DOM Elements
 const articleList = document.getElementById('articleList');
@@ -132,11 +133,23 @@ function renderNestedStructure(structure, level = 0, pathPrefix = '') {
                         ${selectedArticles.has(article.id) ? 'checked' : ''}
                     >
                     <div class="article-info">
-                        <div class="article-title">${escapeHtml(article.title)}</div>
+                        <div class="article-title-row">
+                            <div class="article-title">${escapeHtml(article.title)}</div>
+                            <button
+                                class="preview-btn"
+                                onclick="togglePreview('${article.id}')"
+                                title="Preview article"
+                            >
+                                Preview
+                            </button>
+                        </div>
                         <div class="article-meta">
                             <span class="article-id">ID: ${article.id}</span>
                             ${article.category_name ? `<span class="article-category">${escapeHtml(article.category_name)}</span>` : ''}
                         </div>
+                    </div>
+                    <div id="preview-${article.id}" class="article-preview collapsed">
+                        <div class="preview-loading">Loading preview...</div>
                     </div>
                 </div>
             `).join('');
@@ -179,6 +192,51 @@ function toggleCategory(categoryId) {
     } else {
         element.classList.add('collapsed');
         icon.textContent = '▶';
+    }
+}
+
+// Toggle article preview
+async function togglePreview(articleId) {
+    const previewEl = document.getElementById(`preview-${articleId}`);
+    if (!previewEl) return;
+
+    const isCollapsed = previewEl.classList.contains('collapsed');
+
+    if (isCollapsed) {
+        // Expand and load content if not already loaded
+        previewEl.classList.remove('collapsed');
+
+        if (!loadedPreviews.has(articleId)) {
+            // Fetch article content
+            try {
+                previewEl.innerHTML = '<div class="preview-loading">Loading preview...</div>';
+
+                const response = await fetch(`/api/joomla/articles/${articleId}`);
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    previewEl.innerHTML = `
+                        <div class="preview-content">
+                            <div class="preview-header">
+                                <h3>${escapeHtml(data.title)}</h3>
+                                <button class="preview-close" onclick="togglePreview('${articleId}')">✕</button>
+                            </div>
+                            <div class="preview-body">
+                                ${data.raw_html}
+                            </div>
+                        </div>
+                    `;
+                    loadedPreviews.add(articleId);
+                } else {
+                    previewEl.innerHTML = `<div class="preview-error">Failed to load preview: ${escapeHtml(data.message)}</div>`;
+                }
+            } catch (error) {
+                previewEl.innerHTML = `<div class="preview-error">Error loading preview: ${escapeHtml(error.message)}</div>`;
+            }
+        }
+    } else {
+        // Collapse
+        previewEl.classList.add('collapsed');
     }
 }
 
