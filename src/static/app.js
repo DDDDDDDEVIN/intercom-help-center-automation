@@ -12,6 +12,7 @@ const refreshBtn = document.getElementById('refreshBtn');
 const selectAllBtn = document.getElementById('selectAllBtn');
 const deselectAllBtn = document.getElementById('deselectAllBtn');
 const publishBtn = document.getElementById('publishBtn');
+const updateBtn = document.getElementById('updateBtn');
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -21,6 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
     selectAllBtn.addEventListener('click', selectAll);
     deselectAllBtn.addEventListener('click', deselectAll);
     publishBtn.addEventListener('click', publishSelected);
+    updateBtn.addEventListener('click', updateSelected);
 });
 
 // Load articles from API
@@ -303,10 +305,13 @@ function deselectAll() {
     reRenderCurrentView();
 }
 
-// Update publish button state
+// Update publish and update button states
 function updatePublishButton() {
-    publishBtn.disabled = selectedArticles.size === 0;
+    const isDisabled = selectedArticles.size === 0;
+    publishBtn.disabled = isDisabled;
+    updateBtn.disabled = isDisabled;
     publishBtn.textContent = `Publish Selected (${selectedArticles.size})`;
+    updateBtn.textContent = `Update Selected (${selectedArticles.size})`;
 }
 
 // Publish selected articles
@@ -365,6 +370,64 @@ async function publishSelected() {
         showError('Failed to publish articles: ' + error.message);
     } finally {
         publishBtn.disabled = false;
+        updatePublishButton();
+    }
+}
+
+// Update selected articles
+async function updateSelected() {
+    if (selectedArticles.size === 0) return;
+
+    const articleIds = Array.from(selectedArticles);
+
+    // Show status panel
+    statusPanel.style.display = 'block';
+    statusList.innerHTML = '';
+
+    // Disable buttons during operation
+    updateBtn.disabled = true;
+    updateBtn.textContent = 'Updating...';
+    publishBtn.disabled = true;
+
+    // Create status items
+    const statusItems = {};
+    articleIds.forEach(id => {
+        const article = articles.find(a => a.id === id);
+        const statusId = `status-${id}`;
+        statusList.innerHTML += `
+            <div id="${statusId}" class="status-item status-pending">
+                <span>${escapeHtml(article.title)}</span>
+                <span>Updating...</span>
+            </div>
+        `;
+        statusItems[id] = statusId;
+    });
+
+    // Process articles
+    try {
+        const response = await fetch('/api/articles/update', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ article_ids: articleIds })
+        });
+
+        const result = await response.json();
+
+        if (result.results) {
+            result.results.forEach(item => {
+                const statusElement = document.getElementById(statusItems[item.article_id]);
+                if (statusElement) {
+                    statusElement.className = `status-item status-${item.status}`;
+                    statusElement.querySelector('span:last-child').textContent =
+                        item.status === 'success' ? 'Updated ✓' : `Error: ${item.message}`;
+                }
+            });
+        }
+    } catch (error) {
+        showError('Failed to update: ' + error.message);
+    } finally {
+        updateBtn.disabled = false;
+        updateBtn.textContent = 'Update Selected';
         updatePublishButton();
     }
 }

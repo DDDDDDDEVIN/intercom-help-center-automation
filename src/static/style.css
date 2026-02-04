@@ -80,6 +80,20 @@ header p {
     background: #e0e0e0;
 }
 
+.btn-warning {
+    background: #ff9800;
+    color: white;
+}
+
+.btn-warning:hover {
+    background: #f57c00;
+}
+
+.btn-warning:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+
 .loading {
     text-align: center;
     padding: 40px;

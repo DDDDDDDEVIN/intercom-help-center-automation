@@ -94,6 +94,60 @@ class GoogleSheetsService:
             'intercom_url': found_url
         }
 
+    def lookup_article_by_title(self, article_title: str, sheet_name: str = 'article_library') -> Dict:
+        """
+        Lookup article in Google Sheets by title and return Intercom ID
+
+        Args:
+            article_title: The article title to search for (matches original_name column)
+            sheet_name: The sheet name to search in (default: 'article_library')
+
+        Returns:
+            Dictionary with exists, intercom_id, intercom_url, and html
+            Format: {
+                'exists': bool,
+                'intercom_id': str,
+                'intercom_url': str,
+                'html': str
+            }
+        """
+        # Use existing check_duplicate to verify existence
+        result = self.check_duplicate(lookup_name=article_title, sheet_name=sheet_name)
+
+        if result['exists']:
+            # Fetch full row to get intercom_id (column 3) and html (column 4)
+            params = {"sheet_name": sheet_name}
+
+            try:
+                response = requests.get(
+                    self.sheet_api_url,
+                    params=params,
+                    allow_redirects=True,
+                    timeout=30
+                )
+
+                if response.status_code == 200:
+                    all_rows = response.json()
+
+                    # Find the matching row
+                    for row in all_rows:
+                        if len(row) > 0 and str(row[0]).strip() == article_title.strip():
+                            return {
+                                'exists': True,
+                                'intercom_id': str(row[3]).strip() if len(row) > 3 else '',
+                                'intercom_url': str(row[2]).strip() if len(row) > 2 else '',
+                                'html': row[4] if len(row) > 4 else ''
+                            }
+            except requests.exceptions.RequestException:
+                pass
+
+        return {
+            'exists': False,
+            'intercom_id': '',
+            'intercom_url': '',
+            'html': ''
+        }
+
     def log_processed_item(
         self,
         original_name: str,

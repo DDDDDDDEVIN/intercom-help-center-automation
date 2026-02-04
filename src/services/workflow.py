@@ -416,12 +416,165 @@ class WorkflowOrchestrator:
             print(f"\n✗ Workflow failed: {str(e)}")
             raise
 
-    def _process_single_chart(self, chart: Dict, xml_cleaner: TableauXMLCleaner, category: str, original_chart_name: str) -> Dict[str, Any]:
+    def execute_update(self, article_id: str) -> Dict[str, Any]:
+        """
+        Execute update workflow for existing article
+
+        Workflow:
+        1. Download article from Joomla to get title
+        2. Lookup in Google Sheets by title to get intercom_id
+        3. If not found → error
+        4. Regenerate content (same as execute())
+        5. Update Intercom article
+        6. Log to Google Sheets (append new row)
+
+        Args:
+            article_id: The Joomla article ID to update
+
+        Returns:
+            Dictionary containing workflow results
+        """
+        print(f"\n{'='*60}")
+        print(f"Starting UPDATE workflow for article ID: {article_id}")
+        print(f"{'='*60}\n")
+
+        try:
+            # Step 1: Download from Joomla to get title
+            print("[Step 1] Downloading article from Joomla...")
+            article_data = self.joomla_service.download_article(article_id)
+            article_title = article_data['article_title'].split('(')[0].strip()
+            print(f"✓ Article title: {article_title}")
+
+            # Step 2: Lookup in Google Sheets
+            print("\n[Step 2] Looking up article in Google Sheets...")
+            lookup_result = self.google_sheets_service.lookup_article_by_title(
+                article_title=article_title,
+                sheet_name=self.google_sheets_article_library_sheet
+            )
+
+            if not lookup_result['exists']:
+                raise Exception(
+                    f"Article '{article_title}' not found in Google Sheets. "
+                    "Cannot update - use 'Publish' to create it first."
+                )
+
+            intercom_article_id = lookup_result['intercom_id']
+            print(f"✓ Found - Intercom ID: {intercom_article_id}")
+
+            # Steps 3-4: Clean HTML and process charts (reuse existing logic)
+            print("\n[Step 3] Cleaning HTML and processing charts...")
+            cleaned_data = self.html_cleaner.clean_and_extract(
+                raw_html=article_data['raw_html'],
+                base_url=article_data['base_url']
+            )
+            cleaned_data['article_title'] = article_title
+
+            # Authenticate with Tableau
+            tableau_auth = self.tableau_service.sign_in()
+            xml_cleaner = TableauXMLCleaner(
+                base_url=self.tableau_service.server_url,
+                site_id=tableau_auth['site_id'],
+                auth_token=tableau_auth['auth_token']
+            )
+
+            # Process charts (same as execute())
+            processed_charts = []
+            skipped_charts = []
+
+            for idx, chart in enumerate(cleaned_data['charts'], 1):
+                original_chart_name = chart['title']
+                chart['title'] = self._smart_chart_title(chart['title'])
+
+                print(f"\n[Chart {idx}/{len(cleaned_data['charts'])}] {chart['title']}")
+
+                try:
+                    result = self._process_single_chart(
+                        chart, xml_cleaner, cleaned_data['category'],
+                        original_chart_name,
+                        check_duplicates=False  # Don't skip duplicates in update mode
+                    )
+                    if result['status'] == 'skipped':
+                        skipped_charts.append({'chart': chart, 'reason': result['reason']})
+                        print(f"⊘ Skipped: {result['reason']}")
+                    else:
+                        processed_charts.append(result)
+                        print(f"✓ Processed successfully")
+                except Exception as e:
+                    print(f"✗ Error: {str(e)}")
+                    skipped_charts.append({'chart': chart, 'reason': str(e)})
+
+            # Step 5: Generate updated article HTML
+            if processed_charts:
+                charts_for_article = [
+                    {
+                        'title': r['chart']['title'],
+                        'image_url': r['chart']['image_url'],
+                        'shows': r['chart']['shows'],
+                        'intercom_url': r.get('chart_intercom_url', '')
+                    }
+                    for r in processed_charts if r['status'] == 'success'
+                ]
+
+                article_html = self.html_formatter.format_article_with_charts_html(
+                    article_title=cleaned_data['article_title'],
+                    category=cleaned_data['category'],
+                    technology=cleaned_data['technology'],
+                    charts_data=charts_for_article
+                )
+
+                # Step 6: Update Intercom article
+                print(f"\n[Update] Updating Intercom article...")
+                update_result = self.intercom_service.update_article(
+                    article_id=intercom_article_id,
+                    title=cleaned_data['article_title'],
+                    body_html=article_html,
+                    state='published'
+                )
+
+                if update_result['status'] != 'success':
+                    raise Exception(f"Intercom update failed: {update_result.get('message')}")
+
+                article_intercom_url = update_result['article_url']
+                print(f"✓ Updated: {article_intercom_url}")
+
+                # Step 7: Log to Google Sheets (append new row with updated HTML)
+                self.google_sheets_service.log_processed_item(
+                    original_name=cleaned_data['article_title'],
+                    human_name=cleaned_data['article_title'],
+                    intercom_url=article_intercom_url,
+                    intercom_id=intercom_article_id,
+                    html=article_html,
+                    sheet_name=self.google_sheets_article_library_sheet
+                )
+
+                print(f"\n{'='*60}")
+                print(f"✓ Update completed successfully")
+                print(f"{'='*60}\n")
+
+                return {
+                    'status': 'success',
+                    'article_id': article_id,
+                    'article_title': cleaned_data['article_title'],
+                    'intercom_article_id': intercom_article_id,
+                    'intercom_url': article_intercom_url,
+                    'total_charts': len(cleaned_data['charts']),
+                    'processed_charts': len(processed_charts),
+                    'skipped_charts': len(skipped_charts),
+                    'message': 'Article updated successfully'
+                }
+
+            raise Exception("No charts processed, cannot update article")
+
+        except Exception as e:
+            print(f"\n✗ Update failed: {str(e)}")
+            raise
+
+    def _process_single_chart(self, chart: Dict, xml_cleaner: TableauXMLCleaner, category: str, original_chart_name: str, check_duplicates: bool = True) -> Dict[str, Any]:
         """
         Process a single chart through all steps
 
         Steps:
-        1. Check for duplicates in Google Sheets
+        1. Check for duplicates in Google Sheets (optional)
         2. Search for workbook in Tableau
         3. Select correct workbook ID
         4. Download and clean XML
@@ -431,24 +584,30 @@ class WorkflowOrchestrator:
         Args:
             chart: Chart dictionary with view_id, title, image_url, tabs_name, shows
             xml_cleaner: Initialized TableauXMLCleaner instance
+            category: Article category
+            original_chart_name: Original chart name before formatting
+            check_duplicates: Whether to check for duplicates (False for updates)
 
         Returns:
             Dictionary with processing results
         """
-        # Step 1: Duplicate Check
-        print(f"  [1/6] Checking for duplicates...")
-        duplicate_check = self.google_sheets_service.check_duplicate(
-            lookup_name=original_chart_name,
-            sheet_name=self.google_sheets_chart_library_sheet
-        )
+        # Step 1: Duplicate Check (skip if check_duplicates=False)
+        if check_duplicates:
+            print(f"  [1/6] Checking for duplicates...")
+            duplicate_check = self.google_sheets_service.check_duplicate(
+                lookup_name=original_chart_name,
+                sheet_name=self.google_sheets_chart_library_sheet
+            )
 
-        if duplicate_check['exists']:
-            return {
-                'status': 'skipped',
-                'reason': 'Duplicate found in Google Sheets',
-                'chart': chart
-            }
-        print(f"  ✓ No duplicate found")
+            if duplicate_check['exists']:
+                return {
+                    'status': 'skipped',
+                    'reason': 'Duplicate found in Google Sheets',
+                    'chart': chart
+                }
+            print(f"  ✓ No duplicate found")
+        else:
+            print(f"  [1/6] Skipping duplicate check (update mode)")
 
         # Step 2: Search for workbook
         print(f"  [2/6] Searching for workbook: {chart['tabs_name']}")
@@ -556,7 +715,8 @@ class WorkflowOrchestrator:
                         field_result = self._process_single_data_field(
                             field_name=field_name,
                             field_context=field_context,
-                            chart_title=chart['title']
+                            chart_title=chart['title'],
+                            check_duplicates=check_duplicates  # Pass through from parent
                         )
 
                         if field_result['status'] == 'skipped':
@@ -703,13 +863,14 @@ class WorkflowOrchestrator:
         self,
         field_name: str,
         field_context: str,
-        chart_title: str
+        chart_title: str,
+        check_duplicates: bool = True
     ) -> Dict[str, Any]:
         """
         Process a single data field through all steps
 
         Steps:
-        1. Check for duplicates in Google Sheets (data_dictionary)
+        1. Check for duplicates in Google Sheets (data_dictionary) (optional)
         2. Analyze field with ChatGPT
         3. Rewrite field name with ChatGPT
         4. Format HTML
@@ -720,25 +881,29 @@ class WorkflowOrchestrator:
             field_name: The field name
             field_context: Extracted XML context
             chart_title: Parent chart title (for context)
+            check_duplicates: Whether to check for duplicates (False for updates)
 
         Returns:
             Dictionary with processing results
         """
-        # Step 1: Duplicate Check
-        print(f"      [1/6] Checking duplicates...")
-        duplicate_check = self.google_sheets_service.check_duplicate(
-            lookup_name=field_name,
-            sheet_name=self.google_sheets_data_dict_sheet
-        )
+        # Step 1: Duplicate Check (skip if check_duplicates=False)
+        if check_duplicates:
+            print(f"      [1/6] Checking duplicates...")
+            duplicate_check = self.google_sheets_service.check_duplicate(
+                lookup_name=field_name,
+                sheet_name=self.google_sheets_data_dict_sheet
+            )
 
-        if duplicate_check['exists']:
-            return {
-                'status': 'skipped',
-                'reason': 'Duplicate in data_dictionary',
-                'field_name': field_name,
-                'human_name': duplicate_check.get('human_name', field_name),
-                'intercom_url': duplicate_check.get('intercom_url', '')
-            }
+            if duplicate_check['exists']:
+                return {
+                    'status': 'skipped',
+                    'reason': 'Duplicate in data_dictionary',
+                    'field_name': field_name,
+                    'human_name': duplicate_check.get('human_name', field_name),
+                    'intercom_url': duplicate_check.get('intercom_url', '')
+                }
+        else:
+            print(f"      [1/6] Skipping duplicate check (update mode)")
 
         # Step 2: Analyze field with ChatGPT
         print(f"      [2/6] Analyzing field...")

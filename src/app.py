@@ -289,6 +289,73 @@ def create_articles():
         }), 500
 
 
+@app.route('/api/articles/update', methods=['POST'])
+def update_articles():
+    """
+    API endpoint to update selected articles in Intercom
+
+    Expected POST body:
+    {
+        "article_ids": ["123", "456", "789"]
+    }
+
+    Returns:
+        JSON with processing results for each article
+    """
+    try:
+        data = request.get_json()
+
+        if not data or 'article_ids' not in data:
+            return jsonify({
+                'error': 'Missing article_ids in request body'
+            }), 400
+
+        article_ids = data['article_ids']
+
+        if not isinstance(article_ids, list):
+            return jsonify({
+                'error': 'article_ids must be an array'
+            }), 400
+
+        results = []
+
+        # Process each article
+        for article_id in article_ids:
+            try:
+                print(f"\n[Update] Processing article ID: {article_id}")
+
+                # Execute the UPDATE workflow for this article
+                result = orchestrator.execute_update(str(article_id))
+
+                results.append({
+                    'article_id': article_id,
+                    'status': 'success',
+                    'message': result.get('message', 'Updated successfully')
+                })
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"[Update] Error processing article {article_id}: {error_msg}")
+
+                results.append({
+                    'article_id': article_id,
+                    'status': 'error',
+                    'message': error_msg
+                })
+
+        return jsonify({
+            'success': True,
+            'total': len(article_ids),
+            'results': results
+        }), 200
+
+    except Exception as e:
+        print(f"[API] Error in batch update: {str(e)}")
+        return jsonify({
+            'error': str(e)
+        }), 500
+
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
