@@ -2,6 +2,7 @@ let articles = [];
 let selectedArticles = new Set();
 let currentNestedStructure = null;  // Store nested structure for re-rendering
 let loadedPreviews = new Set();  // Track which previews have been loaded
+let publishedArticles = new Set();  // Track which articles are published (by title)
 
 // DOM Elements
 const articleList = document.getElementById('articleList');
@@ -25,10 +26,29 @@ document.addEventListener('DOMContentLoaded', () => {
     updateBtn.addEventListener('click', updateSelected);
 });
 
+// Load published articles from Google Sheets
+async function loadPublishedArticles() {
+    try {
+        const response = await fetch('/api/articles/published');
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            publishedArticles.clear();
+            data.published_titles.forEach(title => publishedArticles.add(title));
+            console.log(`Loaded ${publishedArticles.size} published articles from Google Sheets`);
+        }
+    } catch (error) {
+        console.error('Failed to load published articles:', error);
+    }
+}
+
 // Load articles from API
 async function loadArticles() {
     loading.style.display = 'block';
     articleList.innerHTML = '';
+
+    // Load published articles first
+    await loadPublishedArticles();
 
     try {
         const response = await fetch('/api/joomla/articles');
@@ -126,8 +146,10 @@ function renderNestedStructure(structure, level = 0, pathPrefix = '') {
     for (const [key, value] of Object.entries(structure)) {
         if (key === 'articles') {
             // Render articles at this level
-            html += value.map(article => `
-                <div class="article-item" style="margin-left: ${level * 30}px;">
+            html += value.map(article => {
+                const isPublished = publishedArticles.has(article.title);
+                return `
+                <div class="article-item ${isPublished ? 'published' : ''}" style="margin-left: ${level * 30}px;">
                     <input
                         type="checkbox"
                         class="article-checkbox"
@@ -136,7 +158,7 @@ function renderNestedStructure(structure, level = 0, pathPrefix = '') {
                     >
                     <div class="article-info">
                         <div class="article-title-row">
-                            <div class="article-title">${escapeHtml(article.title)}</div>
+                            <div class="article-title">${escapeHtml(article.title)}${isPublished ? ' <span class="published-badge">✓ Published</span>' : ''}</div>
                             <button
                                 class="preview-btn"
                                 onclick="togglePreview('${article.id}')"
@@ -154,7 +176,8 @@ function renderNestedStructure(structure, level = 0, pathPrefix = '') {
                         <div class="preview-loading">Loading preview...</div>
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         } else {
             // Render category header with collapse/expand
             // Use full path to create unique ID
@@ -364,7 +387,21 @@ async function publishSelected() {
                         item.status === 'skipped' ? 'Skipped (duplicate)' :
                         `Error: ${item.message}`;
                 }
+
+                // Add successfully published articles to publishedArticles Set
+                if (item.status === 'success' || item.status === 'skipped') {
+                    const article = articles.find(a => a.id === item.article_id);
+                    if (article) {
+                        publishedArticles.add(article.title);
+                    }
+                }
             });
+
+            // Re-render the nested structure to show green highlighting
+            if (currentNestedStructure) {
+                articleList.innerHTML = renderNestedStructure(currentNestedStructure);
+                attachCheckboxListeners();
+            }
         }
     } catch (error) {
         showError('Failed to publish articles: ' + error.message);
@@ -421,7 +458,21 @@ async function updateSelected() {
                     statusElement.querySelector('span:last-child').textContent =
                         item.status === 'success' ? 'Updated ✓' : `Error: ${item.message}`;
                 }
+
+                // Ensure updated articles are in publishedArticles Set
+                if (item.status === 'success') {
+                    const article = articles.find(a => a.id === item.article_id);
+                    if (article) {
+                        publishedArticles.add(article.title);
+                    }
+                }
             });
+
+            // Re-render to ensure UI is in sync
+            if (currentNestedStructure) {
+                articleList.innerHTML = renderNestedStructure(currentNestedStructure);
+                attachCheckboxListeners();
+            }
         }
     } catch (error) {
         showError('Failed to update: ' + error.message);

@@ -183,6 +183,56 @@ def filter_gpt_prompts(html_content):
     return html_content
 
 
+@app.route('/api/articles/published', methods=['GET'])
+def get_published_articles():
+    """
+    Get all published article titles from Google Sheets
+
+    Returns:
+        JSON with list of published article titles
+    """
+    try:
+        # Fetch all rows from article_library sheet
+        import requests
+        params = {"sheet_name": os.getenv('GOOGLE_SHEETS_ARTICLE_LIBRARY_SHEET', 'article_library')}
+
+        response = requests.get(
+            os.getenv('GOOGLE_SHEETS_API_URL'),
+            params=params,
+            allow_redirects=True,
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            all_rows = response.json()
+
+            # Extract article titles (column 0)
+            published_titles = []
+            for row in all_rows:
+                if len(row) > 0 and str(row[0]).strip():
+                    published_titles.append(str(row[0]).strip())
+
+            return jsonify({
+                'status': 'success',
+                'published_titles': published_titles,
+                'count': len(published_titles)
+            }), 200
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': f'Google Sheets API error: {response.status_code}',
+                'published_titles': []
+            }), 500
+
+    except Exception as e:
+        print(f"[API] Error fetching published articles: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'published_titles': []
+        }), 500
+
+
 @app.route('/api/joomla/articles/<article_id>', methods=['GET'])
 def get_article_preview(article_id):
     """
