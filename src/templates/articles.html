@@ -35,6 +35,21 @@
         </div>
     </div>
 
+    <!-- Comparison Modal -->
+    <div id="comparisonModal" class="comparison-modal" style="display: none;">
+        <div class="comparison-modal-content">
+            <div class="comparison-header">
+                <h2>Review Article Updates</h2>
+                <button id="closeComparisonBtn" class="preview-close">&times;</button>
+            </div>
+            <div id="comparisonList" class="comparison-list"></div>
+            <div class="comparison-actions">
+                <button id="confirmAllBtn" class="btn btn-primary">Apply Selected Updates</button>
+                <button id="cancelComparisonBtn" class="btn btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

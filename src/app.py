@@ -346,11 +346,13 @@ def update_articles():
 
     Expected POST body:
     {
-        "article_ids": ["123", "456", "789"]
+        "article_ids": ["123", "456", "789"],
+        "preview": true  // Optional: if true, returns comparison data without updating
     }
 
     Returns:
         JSON with processing results for each article
+        If preview=true, includes old_html and new_html for comparison
     """
     try:
         data = request.get_json()
@@ -361,6 +363,7 @@ def update_articles():
             }), 400
 
         article_ids = data['article_ids']
+        preview = data.get('preview', False)  # Default to False for backward compatibility
 
         if not isinstance(article_ids, list):
             return jsonify({
@@ -372,16 +375,26 @@ def update_articles():
         # Process each article
         for article_id in article_ids:
             try:
-                print(f"\n[Update] Processing article ID: {article_id}")
+                mode_text = "Preview" if preview else "Update"
+                print(f"\n[{mode_text}] Processing article ID: {article_id}")
 
-                # Execute the UPDATE workflow for this article
-                result = orchestrator.execute_update(str(article_id))
+                # Execute the UPDATE workflow for this article (with preview mode if requested)
+                result = orchestrator.execute_update(str(article_id), preview_mode=preview)
 
-                results.append({
+                result_data = {
                     'article_id': article_id,
-                    'status': 'success',
+                    'status': result.get('status', 'success'),
                     'message': result.get('message', 'Updated successfully')
-                })
+                }
+
+                # Include comparison data if in preview mode
+                if preview and result.get('status') == 'preview':
+                    result_data.update({
+                        'comparisons': result.get('comparisons', []),
+                        'total_comparisons': result.get('total_comparisons', 0)
+                    })
+
+                results.append(result_data)
 
             except Exception as e:
                 error_msg = str(e)
@@ -401,6 +414,140 @@ def update_articles():
 
     except Exception as e:
         print(f"[API] Error in batch update: {str(e)}")
+        return jsonify({
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/articles/update/confirm', methods=['POST'])
+def confirm_article_updates():
+    """
+    Apply confirmed article updates to Intercom
+
+    Expected POST body:
+    {
+        "updates": [
+            {
+                "article_title": "Title",
+                "article_type": "main_article|chart|data_field",
+                "intercom_article_id": "456",  // empty if new
+                "collection_id": "...",  // for charts and data fields
+                "html": "chosen HTML content",
+                "original_name": "...",  // for charts and data fields (Tableau name)
+                "field_name": "..."  // for data fields only
+            }
+        ]
+    }
+
+    Returns:
+        JSON with results for each applied update
+    """
+    try:
+        data = request.get_json()
+
+        if not data or 'updates' not in data:
+            return jsonify({
+                'error': 'Missing updates in request body'
+            }), 400
+
+        updates = data['updates']
+
+        if not isinstance(updates, list):
+            return jsonify({
+                'error': 'updates must be an array'
+            }), 400
+
+        results = []
+
+        # Apply each update
+        for update_item in updates:
+            try:
+                article_title = update_item.get('article_title')
+                article_type = update_item.get('article_type', 'main_article')
+                intercom_article_id = update_item.get('intercom_article_id', '')
+                html_content = update_item.get('html')
+                collection_id = update_item.get('collection_id')
+                original_name = update_item.get('original_name', article_title)
+
+                if not all([article_title, html_content]):
+                    raise Exception("Missing required fields: article_title or html")
+
+                print(f"\n[Confirm] Applying update for [{article_type}]: {article_title}")
+
+                # Determine action based on whether article exists
+                if intercom_article_id:
+                    # Update existing article
+                    update_result = orchestrator.intercom_service.update_article(
+                        article_id=intercom_article_id,
+                        title=article_title,
+                        body_html=html_content,
+                        state='published'
+                    )
+                else:
+                    # Create new article (for charts and data fields)
+                    if not collection_id:
+                        raise Exception("collection_id required for new articles")
+
+                    update_result = orchestrator.intercom_service.create_article(
+                        title=article_title,
+                        body_html=html_content,
+                        collection_id=collection_id,
+                        author_id=orchestrator.intercom_author_id,
+                        state='published'
+                    )
+
+                if update_result['status'] != 'success':
+                    raise Exception(f"Intercom operation failed: {update_result.get('message')}")
+
+                article_intercom_url = update_result['article_url']
+                intercom_article_id = update_result.get('article_id', intercom_article_id)
+                print(f"✓ {'Updated' if update_item.get('intercom_article_id') else 'Created'} in Intercom: {article_intercom_url}")
+
+                # Determine sheet name based on article type
+                if article_type == 'chart':
+                    sheet_name = orchestrator.google_sheets_chart_library_sheet
+                elif article_type == 'data_field':
+                    sheet_name = orchestrator.google_sheets_data_dict_sheet
+                else:  # main_article
+                    sheet_name = orchestrator.google_sheets_article_library_sheet
+
+                # Log to Google Sheets
+                orchestrator.google_sheets_service.log_processed_item(
+                    original_name=original_name,
+                    human_name=article_title,
+                    intercom_url=article_intercom_url,
+                    intercom_id=intercom_article_id,
+                    html=html_content,
+                    sheet_name=sheet_name
+                )
+                print(f"✓ Logged to Google Sheets ({sheet_name})")
+
+                results.append({
+                    'article_title': article_title,
+                    'article_type': article_type,
+                    'status': 'success',
+                    'message': 'Update applied successfully'
+                })
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"[Confirm] Error applying update: {error_msg}")
+
+                results.append({
+                    'article_title': update_item.get('article_title', 'unknown'),
+                    'article_type': update_item.get('article_type', 'unknown'),
+                    'status': 'error',
+                    'message': error_msg
+                })
+
+        return jsonify({
+            'success': True,
+            'total': len(updates),
+            'results': results
+        }), 200
+
+    except Exception as e:
+        print(f"[API] Error in confirm updates: {str(e)}")
         return jsonify({
             'error': str(e)
         }), 500

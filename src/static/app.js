@@ -296,24 +296,27 @@ function reRenderCurrentView() {
         // Re-render nested structure with proper ordering
         const orderedStructure = orderNestedStructure(currentNestedStructure);
         articleList.innerHTML = renderNestedStructure(orderedStructure);
-
-        // Reattach checkbox listeners
-        document.querySelectorAll('.article-checkbox').forEach(checkbox => {
-            checkbox.addEventListener('change', (e) => {
-                const articleId = e.target.dataset.articleId;
-                if (e.target.checked) {
-                    selectedArticles.add(articleId);
-                } else {
-                    selectedArticles.delete(articleId);
-                }
-                updatePublishButton();
-            });
-        });
+        attachCheckboxListeners();
     } else {
         // Render flat list
         renderArticles();
     }
     updatePublishButton();
+}
+
+// Attach checkbox event listeners
+function attachCheckboxListeners() {
+    document.querySelectorAll('.article-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            const articleId = e.target.dataset.articleId;
+            if (e.target.checked) {
+                selectedArticles.add(articleId);
+            } else {
+                selectedArticles.delete(articleId);
+            }
+            updatePublishButton();
+        });
+    });
 }
 
 // Select all articles
@@ -411,75 +414,236 @@ async function publishSelected() {
     }
 }
 
-// Update selected articles
+// Update selected articles (with preview comparison)
 async function updateSelected() {
     if (selectedArticles.size === 0) return;
 
     const articleIds = Array.from(selectedArticles);
 
-    // Show status panel
-    statusPanel.style.display = 'block';
-    statusList.innerHTML = '';
-
     // Disable buttons during operation
     updateBtn.disabled = true;
-    updateBtn.textContent = 'Updating...';
+    updateBtn.textContent = 'Generating Previews...';
     publishBtn.disabled = true;
 
-    // Create status items
-    const statusItems = {};
-    articleIds.forEach(id => {
-        const article = articles.find(a => a.id === id);
-        const statusId = `status-${id}`;
-        statusList.innerHTML += `
-            <div id="${statusId}" class="status-item status-pending">
-                <span>${escapeHtml(article.title)}</span>
-                <span>Updating...</span>
-            </div>
-        `;
-        statusItems[id] = statusId;
-    });
-
-    // Process articles
     try {
+        // Step 1: Call API with preview mode to get comparisons
         const response = await fetch('/api/articles/update', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ article_ids: articleIds })
+            body: JSON.stringify({
+                article_ids: articleIds,
+                preview: true
+            })
         });
 
         const result = await response.json();
 
         if (result.results) {
-            result.results.forEach(item => {
-                const statusElement = document.getElementById(statusItems[item.article_id]);
-                if (statusElement) {
-                    statusElement.className = `status-item status-${item.status}`;
-                    statusElement.querySelector('span:last-child').textContent =
-                        item.status === 'success' ? 'Updated ✓' : `Error: ${item.message}`;
-                }
+            // Collect all comparisons from all articles
+            let allComparisons = [];
+            let errors = [];
 
-                // Ensure updated articles are in publishedArticles Set
-                if (item.status === 'success') {
-                    const article = articles.find(a => a.id === item.article_id);
-                    if (article) {
-                        publishedArticles.add(article.title);
-                    }
+            result.results.forEach(item => {
+                if (item.status === 'preview' && item.comparisons) {
+                    allComparisons = allComparisons.concat(item.comparisons);
+                } else if (item.status === 'error') {
+                    errors.push(item);
                 }
             });
 
-            // Re-render to ensure UI is in sync
+            if (errors.length > 0) {
+                // Show errors in console or status panel
+                console.error('Some articles failed to generate preview:', errors);
+            }
+
+            if (allComparisons.length > 0) {
+                // Show comparison modal with all comparisons (charts, data fields, main articles)
+                showComparisonModal(allComparisons);
+            } else {
+                showError('No previews could be generated');
+            }
+        }
+    } catch (error) {
+        showError('Failed to generate previews: ' + error.message);
+    } finally {
+        updateBtn.disabled = false;
+        updateBtn.textContent = 'Update Selected';
+        updatePublishButton();
+    }
+}
+
+// Show comparison modal with old vs new HTML
+function showComparisonModal(comparisons) {
+    const modal = document.getElementById('comparisonModal');
+    const comparisonList = document.getElementById('comparisonList');
+    const closeBtn = document.getElementById('closeComparisonBtn');
+    const cancelBtn = document.getElementById('cancelComparisonBtn');
+    const confirmBtn = document.getElementById('confirmAllBtn');
+
+    // Store comparisons for later confirmation
+    window.currentComparisons = comparisons;
+
+    // Build comparison HTML
+    let html = '';
+    comparisons.forEach((comp, index) => {
+        // Determine article type label
+        let typeLabel = '';
+        let typeBadgeClass = '';
+        if (comp.article_type === 'chart') {
+            typeLabel = 'Chart';
+            typeBadgeClass = 'type-badge-chart';
+        } else if (comp.article_type === 'data_field') {
+            typeLabel = 'Data Field';
+            typeBadgeClass = 'type-badge-field';
+        } else if (comp.article_type === 'main_article') {
+            typeLabel = 'Main Article';
+            typeBadgeClass = 'type-badge-article';
+        }
+
+        html += `
+            <div class="comparison-item">
+                <div class="comparison-item-header">
+                    <h3>
+                        <span class="type-badge ${typeBadgeClass}">${typeLabel}</span>
+                        ${escapeHtml(comp.article_title)}
+                    </h3>
+                </div>
+                <div class="comparison-panels">
+                    <div class="comparison-panel">
+                        <div class="comparison-panel-header">
+                            <h4>Current Version</h4>
+                            <label class="choice-label">
+                                <input type="radio" name="choice-${index}" value="old" checked>
+                                Keep Original
+                            </label>
+                        </div>
+                        <div class="html-preview">
+                            ${comp.old_html || '<p style="color: #999;">No existing content</p>'}
+                        </div>
+                    </div>
+                    <div class="comparison-panel">
+                        <div class="comparison-panel-header">
+                            <h4>New Version</h4>
+                            <label class="choice-label">
+                                <input type="radio" name="choice-${index}" value="new">
+                                Use New Version
+                            </label>
+                        </div>
+                        <div class="html-preview">
+                            ${comp.new_html}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    comparisonList.innerHTML = html;
+
+    // Show modal
+    modal.style.display = 'flex';
+
+    // Attach event listeners
+    closeBtn.onclick = () => {
+        modal.style.display = 'none';
+    };
+    cancelBtn.onclick = () => {
+        modal.style.display = 'none';
+    };
+    confirmBtn.onclick = confirmUpdates;
+}
+
+// Apply confirmed updates
+async function confirmUpdates() {
+    const comparisons = window.currentComparisons;
+    if (!comparisons) return;
+
+    const modal = document.getElementById('comparisonModal');
+    const confirmBtn = document.getElementById('confirmAllBtn');
+
+    // Disable confirm button
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Applying Updates...';
+
+    // Build update payload based on user selections
+    const updates = [];
+    comparisons.forEach((comp, index) => {
+        const radioButtons = document.getElementsByName(`choice-${index}`);
+        let selectedVersion = 'old';  // Default to keeping original
+
+        for (const radio of radioButtons) {
+            if (radio.checked) {
+                selectedVersion = radio.value;
+                break;
+            }
+        }
+
+        // Only include updates where user chose "new"
+        if (selectedVersion === 'new') {
+            updates.push({
+                article_title: comp.article_title,
+                article_type: comp.article_type,
+                intercom_article_id: comp.intercom_article_id || '',
+                collection_id: comp.collection_id || '',
+                html: comp.new_html,
+                original_name: comp.original_chart_name || comp.field_name || comp.article_title
+            });
+        }
+    });
+
+    if (updates.length === 0) {
+        alert('No updates selected. All articles will keep their original version.');
+        modal.style.display = 'none';
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Apply Selected Updates';
+        return;
+    }
+
+    // Show status panel
+    statusPanel.style.display = 'block';
+    statusList.innerHTML = '';
+
+    try {
+        // Call confirm endpoint
+        const response = await fetch('/api/articles/update/confirm', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ updates })
+        });
+
+        const result = await response.json();
+
+        if (result.results) {
+            // Show status for each update
+            result.results.forEach(item => {
+                const statusHtml = `
+                    <div class="status-item status-${item.status}">
+                        <span>${escapeHtml(item.article_title || 'unknown')}</span>
+                        <span>${item.status === 'success' ? 'Updated ✓' : `Error: ${item.message}`}</span>
+                    </div>
+                `;
+                statusList.innerHTML += statusHtml;
+
+                // Add to publishedArticles Set (only for main articles, not charts/data fields)
+                if (item.status === 'success' && item.article_type === 'main_article') {
+                    publishedArticles.add(item.article_title);
+                }
+            });
+
+            // Re-render to show green highlighting
             if (currentNestedStructure) {
                 articleList.innerHTML = renderNestedStructure(currentNestedStructure);
                 attachCheckboxListeners();
             }
         }
+
+        // Close modal
+        modal.style.display = 'none';
     } catch (error) {
-        showError('Failed to update: ' + error.message);
+        showError('Failed to apply updates: ' + error.message);
     } finally {
-        updateBtn.disabled = false;
-        updateBtn.textContent = 'Update Selected';
-        updatePublishButton();
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Apply Selected Updates';
     }
 }
 

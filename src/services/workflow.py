@@ -416,26 +416,29 @@ class WorkflowOrchestrator:
             print(f"\n✗ Workflow failed: {str(e)}")
             raise
 
-    def execute_update(self, article_id: str) -> Dict[str, Any]:
+    def execute_update(self, article_id: str, preview_mode: bool = False) -> Dict[str, Any]:
         """
         Execute update workflow for existing article
 
         Workflow:
         1. Download article from Joomla to get title
-        2. Lookup in Google Sheets by title to get intercom_id
+        2. Lookup in Google Sheets by title to get intercom_id and old HTML
         3. If not found → error
         4. Regenerate content (same as execute())
-        5. Update Intercom article
-        6. Log to Google Sheets (append new row)
+        5. If preview_mode=True: Return old and new HTML for comparison
+        6. If preview_mode=False: Update Intercom article and log to Sheets
 
         Args:
             article_id: The Joomla article ID to update
+            preview_mode: If True, generate new HTML but don't update Intercom (for comparison)
 
         Returns:
             Dictionary containing workflow results
+            If preview_mode=True, includes 'old_html' and 'new_html' for comparison
         """
+        mode_text = "PREVIEW" if preview_mode else "UPDATE"
         print(f"\n{'='*60}")
-        print(f"Starting UPDATE workflow for article ID: {article_id}")
+        print(f"Starting {mode_text} workflow for article ID: {article_id}")
         print(f"{'='*60}\n")
 
         try:
@@ -459,6 +462,7 @@ class WorkflowOrchestrator:
                 )
 
             intercom_article_id = lookup_result['intercom_id']
+            old_html = lookup_result.get('html', '')  # Store old HTML for comparison
             print(f"✓ Found - Intercom ID: {intercom_article_id}")
 
             # Steps 3-4: Clean HTML and process charts (reuse existing logic)
@@ -480,6 +484,7 @@ class WorkflowOrchestrator:
             # Process charts (same as execute())
             processed_charts = []
             skipped_charts = []
+            all_comparisons = []  # Collect all comparisons in preview mode
 
             for idx, chart in enumerate(cleaned_data['charts'], 1):
                 original_chart_name = chart['title']
@@ -491,11 +496,16 @@ class WorkflowOrchestrator:
                     result = self._process_single_chart(
                         chart, xml_cleaner, cleaned_data['category'],
                         original_chart_name,
-                        check_duplicates=False  # Don't skip duplicates in update mode
+                        check_duplicates=False,  # Don't skip duplicates in update mode
+                        preview_mode=preview_mode  # Pass through preview mode
                     )
                     if result['status'] == 'skipped':
                         skipped_charts.append({'chart': chart, 'reason': result['reason']})
                         print(f"⊘ Skipped: {result['reason']}")
+                    elif result['status'] == 'preview':
+                        # In preview mode, collect all comparisons from this chart
+                        all_comparisons.extend(result.get('comparisons', []))
+                        print(f"✓ Generated {result.get('total_comparisons', 0)} comparison(s)")
                     else:
                         processed_charts.append(result)
                         print(f"✓ Processed successfully")
@@ -504,7 +514,19 @@ class WorkflowOrchestrator:
                     skipped_charts.append({'chart': chart, 'reason': str(e)})
 
             # Step 5: Generate updated article HTML
-            if processed_charts:
+            # In preview mode, use actual chart data from comparisons
+            if preview_mode:
+                # Extract chart data from comparisons (they include image_url and shows)
+                charts_for_article = [
+                    {
+                        'title': comp['article_title'],
+                        'image_url': comp.get('image_url', ''),
+                        'shows': comp.get('shows', ''),
+                        'intercom_url': comp.get('intercom_url', '#')
+                    }
+                    for comp in all_comparisons if comp.get('article_type') == 'chart'
+                ]
+            else:
                 charts_for_article = [
                     {
                         'title': r['chart']['title'],
@@ -515,6 +537,7 @@ class WorkflowOrchestrator:
                     for r in processed_charts if r['status'] == 'success'
                 ]
 
+            if charts_for_article or preview_mode:
                 article_html = self.html_formatter.format_article_with_charts_html(
                     article_title=cleaned_data['article_title'],
                     category=cleaned_data['category'],
@@ -522,7 +545,34 @@ class WorkflowOrchestrator:
                     charts_data=charts_for_article
                 )
 
-                # Step 6: Update Intercom article
+                # If preview mode, add main article comparison and return all comparisons
+                if preview_mode:
+                    # Add main article comparison to the list
+                    all_comparisons.append({
+                        'status': 'preview',
+                        'article_type': 'main_article',
+                        'article_title': cleaned_data['article_title'],
+                        'old_html': old_html,
+                        'new_html': article_html,
+                        'intercom_article_id': intercom_article_id,
+                        'collection_id': None,  # Main articles don't have collection
+                        'message': 'Preview generated - awaiting confirmation'
+                    })
+
+                    print(f"\n[Preview] Generated {len(all_comparisons)} total comparison(s)")
+                    print(f"{'='*60}")
+                    print(f"✓ Preview completed - returning all comparisons")
+                    print(f"{'='*60}\n")
+
+                    return {
+                        'status': 'preview',
+                        'article_id': article_id,
+                        'comparisons': all_comparisons,
+                        'total_comparisons': len(all_comparisons),
+                        'message': 'Preview generated - awaiting confirmation'
+                    }
+
+                # Step 6: Update Intercom article (only if not preview mode)
                 print(f"\n[Update] Updating Intercom article...")
                 update_result = self.intercom_service.update_article(
                     article_id=intercom_article_id,
@@ -569,7 +619,7 @@ class WorkflowOrchestrator:
             print(f"\n✗ Update failed: {str(e)}")
             raise
 
-    def _process_single_chart(self, chart: Dict, xml_cleaner: TableauXMLCleaner, category: str, original_chart_name: str, check_duplicates: bool = True) -> Dict[str, Any]:
+    def _process_single_chart(self, chart: Dict, xml_cleaner: TableauXMLCleaner, category: str, original_chart_name: str, check_duplicates: bool = True, preview_mode: bool = False) -> Dict[str, Any]:
         """
         Process a single chart through all steps
 
@@ -580,6 +630,9 @@ class WorkflowOrchestrator:
         4. Download and clean XML
         5. Analyze with ChatGPT
         6. Extract field names from analysis
+        7. Process data fields
+        8. If preview_mode: Return comparison data for chart AND all data fields
+        9. Else: Publish chart to Intercom
 
         Args:
             chart: Chart dictionary with view_id, title, image_url, tabs_name, shows
@@ -587,27 +640,51 @@ class WorkflowOrchestrator:
             category: Article category
             original_chart_name: Original chart name before formatting
             check_duplicates: Whether to check for duplicates (False for updates)
+            preview_mode: If True, generate HTML but don't publish (for comparison)
 
         Returns:
             Dictionary with processing results
+            If preview_mode=True, includes 'comparisons' list with chart and all data field comparisons
         """
         # Step 1: Duplicate Check (skip if check_duplicates=False)
+        existing_chart_data = {}
         if check_duplicates:
             print(f"  [1/6] Checking for duplicates...")
-            duplicate_check = self.google_sheets_service.check_duplicate(
-                lookup_name=original_chart_name,
-                sheet_name=self.google_sheets_chart_library_sheet
-            )
 
-            if duplicate_check['exists']:
-                return {
-                    'status': 'skipped',
-                    'reason': 'Duplicate found in Google Sheets',
-                    'chart': chart
-                }
-            print(f"  ✓ No duplicate found")
+            # In preview mode, we need full data including HTML, so use lookup_article_by_title
+            if preview_mode:
+                lookup_result = self.google_sheets_service.lookup_article_by_title(
+                    article_title=original_chart_name,
+                    sheet_name=self.google_sheets_chart_library_sheet
+                )
+                if lookup_result['exists']:
+                    existing_chart_data = lookup_result
+                    print(f"  ✓ Found existing (preview mode)")
+                else:
+                    print(f"  ✓ No existing chart found")
+            else:
+                # In non-preview mode, just check for duplicates (don't need HTML)
+                duplicate_check = self.google_sheets_service.check_duplicate(
+                    lookup_name=original_chart_name,
+                    sheet_name=self.google_sheets_chart_library_sheet
+                )
+                if duplicate_check['exists']:
+                    return {
+                        'status': 'skipped',
+                        'reason': 'Duplicate found in Google Sheets',
+                        'chart': chart
+                    }
+                print(f"  ✓ No duplicate found")
         else:
             print(f"  [1/6] Skipping duplicate check (update mode)")
+            # In update/preview mode, look up existing chart by ORIGINAL name (not formatted)
+            lookup_result = self.google_sheets_service.lookup_article_by_title(
+                article_title=original_chart_name,  # Use original name, not formatted title
+                sheet_name=self.google_sheets_chart_library_sheet
+            )
+            if lookup_result['exists']:
+                existing_chart_data = lookup_result
+                print(f"  ✓ Found existing chart in Google Sheets")
 
         # Step 2: Search for workbook
         print(f"  [2/6] Searching for workbook: {chart['tabs_name']}")
@@ -716,7 +793,8 @@ class WorkflowOrchestrator:
                             field_name=field_name,
                             field_context=field_context,
                             chart_title=chart['title'],
-                            check_duplicates=check_duplicates  # Pass through from parent
+                            check_duplicates=check_duplicates,  # Pass through from parent
+                            preview_mode=preview_mode  # Pass through preview mode
                         )
 
                         if field_result['status'] == 'skipped':
@@ -814,6 +892,42 @@ class WorkflowOrchestrator:
                 related_charts_urls=None
             )
 
+            # If preview mode, collect all comparisons (data fields + chart) and return
+            if preview_mode:
+                print(f"  [7/7] Preview mode - collecting all comparisons")
+
+                # Collect all data field comparisons
+                comparisons = []
+                for field_result in processed_fields:
+                    if field_result.get('status') == 'preview':
+                        comparisons.append(field_result)
+
+                # Add chart comparison (include image_url and shows for main article preview)
+                old_chart_html = existing_chart_data.get('html', '')
+                chart_intercom_id = existing_chart_data.get('intercom_id', '')
+
+                comparisons.append({
+                    'status': 'preview',
+                    'article_type': 'chart',
+                    'article_title': chart['title'],
+                    'original_chart_name': original_chart_name,
+                    'old_html': old_chart_html,
+                    'new_html': chart_html,
+                    'intercom_article_id': chart_intercom_id,
+                    'collection_id': self.intercom_service.chart_collection_id,
+                    'image_url': chart['image_url'],  # Preserve for main article HTML
+                    'shows': chart['shows'],  # Preserve for main article HTML
+                    'intercom_url': existing_chart_data.get('intercom_url', '#'),  # Use existing URL if available
+                    'message': 'Preview generated - awaiting confirmation'
+                })
+
+                return {
+                    'status': 'preview',
+                    'comparisons': comparisons,
+                    'chart': chart,
+                    'total_comparisons': len(comparisons)
+                }
+
             # Publish to CHART collection
             chart_article_result = self.intercom_service.create_article(
                 title=chart['title'],
@@ -864,7 +978,8 @@ class WorkflowOrchestrator:
         field_name: str,
         field_context: str,
         chart_title: str,
-        check_duplicates: bool = True
+        check_duplicates: bool = True,
+        preview_mode: bool = False
     ) -> Dict[str, Any]:
         """
         Process a single data field through all steps
@@ -874,36 +989,61 @@ class WorkflowOrchestrator:
         2. Analyze field with ChatGPT
         3. Rewrite field name with ChatGPT
         4. Format HTML
-        5. Publish to Intercom
-        6. Log to Google Sheets
+        5. If preview_mode: Return comparison data (old HTML vs new HTML)
+        6. Else: Publish to Intercom and log to Google Sheets
 
         Args:
             field_name: The field name
             field_context: Extracted XML context
             chart_title: Parent chart title (for context)
             check_duplicates: Whether to check for duplicates (False for updates)
+            preview_mode: If True, generate HTML but don't publish (for comparison)
 
         Returns:
             Dictionary with processing results
+            If preview_mode=True, includes 'old_html', 'new_html', 'article_type': 'data_field'
         """
         # Step 1: Duplicate Check (skip if check_duplicates=False)
+        existing_data = {}
         if check_duplicates:
             print(f"      [1/6] Checking duplicates...")
-            duplicate_check = self.google_sheets_service.check_duplicate(
-                lookup_name=field_name,
-                sheet_name=self.google_sheets_data_dict_sheet
-            )
 
-            if duplicate_check['exists']:
-                return {
-                    'status': 'skipped',
-                    'reason': 'Duplicate in data_dictionary',
-                    'field_name': field_name,
-                    'human_name': duplicate_check.get('human_name', field_name),
-                    'intercom_url': duplicate_check.get('intercom_url', '')
-                }
+            # In preview mode, we need full data including HTML, so use lookup_article_by_title
+            if preview_mode:
+                lookup_result = self.google_sheets_service.lookup_article_by_title(
+                    article_title=field_name,
+                    sheet_name=self.google_sheets_data_dict_sheet
+                )
+                if lookup_result['exists']:
+                    existing_data = lookup_result
+                    print(f"      ✓ Found existing (preview mode)")
+                else:
+                    print(f"      ✓ No existing data field found")
+            else:
+                # In non-preview mode, just check for duplicates (don't need HTML)
+                duplicate_check = self.google_sheets_service.check_duplicate(
+                    lookup_name=field_name,
+                    sheet_name=self.google_sheets_data_dict_sheet
+                )
+                if duplicate_check['exists']:
+                    return {
+                        'status': 'skipped',
+                        'reason': 'Duplicate in data_dictionary',
+                        'field_name': field_name,
+                        'human_name': duplicate_check.get('human_name', field_name),
+                        'intercom_url': duplicate_check.get('intercom_url', '')
+                    }
+                print(f"      ✓ No duplicate found")
         else:
             print(f"      [1/6] Skipping duplicate check (update mode)")
+            # In update/preview mode, look up existing article
+            lookup_result = self.google_sheets_service.lookup_article_by_title(
+                article_title=field_name,
+                sheet_name=self.google_sheets_data_dict_sheet
+            )
+            if lookup_result['exists']:
+                existing_data = lookup_result
+                print(f"      ✓ Found existing data field in Google Sheets")
 
         # Step 2: Analyze field with ChatGPT
         print(f"      [2/6] Analyzing field...")
@@ -935,6 +1075,24 @@ class WorkflowOrchestrator:
             field_name=human_name,
             ai_json=field_analysis['analysis']
         )
+
+        # If preview mode, return comparison data without publishing
+        if preview_mode:
+            print(f"      [5/6] Preview mode - returning comparison data")
+            old_html = existing_data.get('html', '')
+            intercom_id = existing_data.get('intercom_id', '')
+
+            return {
+                'status': 'preview',
+                'article_type': 'data_field',
+                'article_title': human_name,
+                'field_name': field_name,
+                'old_html': old_html,
+                'new_html': html_content,
+                'intercom_article_id': intercom_id,
+                'collection_id': self.intercom_service.data_dict_collection_id,
+                'message': 'Preview generated - awaiting confirmation'
+            }
 
         # Step 5: Publish to Intercom (data dictionary collection)
         print(f"      [5/6] Publishing to Intercom...")
