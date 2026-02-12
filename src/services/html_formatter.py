@@ -11,13 +11,15 @@ class HTMLFormatter:
         """Initialize HTML Formatter"""
         self.spacer = '<p>&nbsp;</p>'  # Intercom spacer
 
-    def format_data_field_html(self, field_name: str, ai_json: str) -> str:
+    def format_data_field_html(self, field_name: str, ai_json: str, related_charts_names: List[str] = None, related_charts_urls: List[str] = None) -> str:
         """
-        Format data field analysis into HTML
+        Format data field analysis into HTML with optional related charts
 
         Args:
             field_name: The field name
             ai_json: AI analysis in JSON format
+            related_charts_names: Optional list of chart titles that use this field
+            related_charts_urls: Optional list of corresponding Intercom URLs
 
         Returns:
             Formatted HTML string
@@ -69,6 +71,19 @@ class HTMLFormatter:
             html_parts.append('<p><strong>Considerations:</strong></p>')
             html_parts.append(f'<p>{considerations}</p>')
             html_parts.append(self.spacer)
+
+        # Related Charts section
+        if related_charts_names and related_charts_urls:
+            if len(related_charts_names) == len(related_charts_urls):
+                html_parts.append('<p><strong>Related Charts:</strong><ul>')
+                for name, url in zip(related_charts_names, related_charts_urls):
+                    if name and url:
+                        html_parts.append(f'<li><a href="{url}" target="_blank">{name}</a></li>')
+                    elif name:
+                        html_parts.append(f'<li>{name}</li>')
+
+                html_parts.append('</ul></p>')
+                html_parts.append(self.spacer)
 
         # Divider
         html_parts.append('<hr>')
@@ -244,7 +259,9 @@ class HTMLFormatter:
         chart_json: Dict,
         field_mapping: Dict[str, Dict[str, str]],
         related_charts_names: List[str] = None,
-        related_charts_urls: List[str] = None
+        related_charts_urls: List[str] = None,
+        related_articles_names: List[str] = None,
+        related_articles_urls: List[str] = None
     ) -> str:
         """
         Format chart HTML with detailed JSON structure and linked fields
@@ -360,8 +377,7 @@ class HTMLFormatter:
         if related_charts_names and related_charts_urls:
             # Ensure both lists have same length
             if len(related_charts_names) == len(related_charts_urls):
-                html_parts.append('<p><strong>Related Charts:</strong></p>')
-                html_parts.append('<ul>')
+                html_parts.append('<p><strong>Related Charts:</strong><ul>')
 
                 for name, url in zip(related_charts_names, related_charts_urls):
                     if name and url:
@@ -369,7 +385,22 @@ class HTMLFormatter:
                     elif name:
                         html_parts.append(f'<li>{name}</li>')
 
-                html_parts.append('</ul>')
+                html_parts.append('</ul></p>')
+                html_parts.append(self.spacer)
+
+        # Related Articles (new section)
+        if related_articles_names and related_articles_urls:
+            # Ensure both lists have same length
+            if len(related_articles_names) == len(related_articles_urls):
+                html_parts.append('<p><strong>Related Articles:</strong><ul>')
+
+                for name, url in zip(related_articles_names, related_articles_urls):
+                    if name and url:
+                        html_parts.append(f'<li><a href="{url}" target="_blank">{name}</a></li>')
+                    elif name:
+                        html_parts.append(f'<li>{name}</li>')
+
+                html_parts.append('</ul></p>')
                 html_parts.append(self.spacer)
 
         return "".join(html_parts)
@@ -439,3 +470,96 @@ class HTMLFormatter:
             html_parts.append(self.spacer)
 
         return "".join(html_parts)
+
+    def inject_related_charts_to_field_html(self, existing_html: str, related_charts_names: List[str], related_charts_urls: List[str]) -> str:
+        """
+        Inject or update Related Charts section in existing data field HTML
+
+        Strategy:
+        1. Check if "Related Charts:" section already exists
+        2. If exists, replace it with updated list
+        3. If not exists, insert before the <hr> divider at the end
+
+        Args:
+            existing_html: Existing data field HTML
+            related_charts_names: List of chart titles
+            related_charts_urls: List of chart URLs
+
+        Returns:
+            Updated HTML with Related Charts section
+        """
+        if not related_charts_names or not related_charts_urls:
+            return existing_html
+
+        # Build Related Charts HTML
+        related_section = '<p><strong>Related Charts:</strong><ul>\n'
+        for name, url in zip(related_charts_names, related_charts_urls):
+            if name and url:
+                related_section += f'<li><a href="{url}" target="_blank">{name}</a></li>\n'
+            elif name:
+                related_section += f'<li>{name}</li>\n'
+        related_section += '</ul></p>\n<p>&nbsp;</p>\n'
+
+        # Check if section already exists
+        if '<strong>Related Charts:</strong>' in existing_html:
+            # Replace existing section (find from "Related Charts" to next <hr> or end)
+            import re
+            pattern = r'<p><strong>Related Charts:</strong>.*?</p>\s*<p>&nbsp;</p>'
+            updated_html = re.sub(pattern, related_section, existing_html, flags=re.DOTALL)
+            return updated_html
+        else:
+            # Insert before final <hr> divider
+            if '<hr>' in existing_html:
+                return existing_html.replace('<hr>', related_section + '<hr>')
+            else:
+                # No divider, append to end
+                return existing_html + '\n' + related_section
+
+    def inject_related_articles_to_chart_html(self, existing_html: str, related_articles_names: List[str], related_articles_urls: List[str]) -> str:
+        """
+        Inject or update Related Articles section in existing chart HTML
+
+        Strategy:
+        1. Check if "Related Articles:" section already exists
+        2. If exists, replace it with updated list
+        3. If not exists, insert after "Related Charts:" section (if exists) or before final content
+
+        Args:
+            existing_html: Existing chart HTML
+            related_articles_names: List of article titles
+            related_articles_urls: List of article URLs
+
+        Returns:
+            Updated HTML with Related Articles section
+        """
+        if not related_articles_names or not related_articles_urls:
+            return existing_html
+
+        # Build Related Articles HTML
+        related_section = '<p><strong>Related Articles:</strong><ul>\n'
+        for name, url in zip(related_articles_names, related_articles_urls):
+            if name and url:
+                related_section += f'<li><a href="{url}" target="_blank">{name}</a></li>\n'
+            elif name:
+                related_section += f'<li>{name}</li>\n'
+        related_section += '</ul></p>\n<p>&nbsp;</p>\n'
+
+        # Check if section already exists
+        if '<strong>Related Articles:</strong>' in existing_html:
+            # Replace existing section
+            import re
+            pattern = r'<p><strong>Related Articles:</strong>.*?</p>\s*<p>&nbsp;</p>'
+            updated_html = re.sub(pattern, related_section, existing_html, flags=re.DOTALL)
+            return updated_html
+        else:
+            # Insert after Related Charts section if it exists, otherwise append to end
+            if '<strong>Related Charts:</strong>' in existing_html:
+                # Find end of Related Charts section and insert after
+                import re
+                # Insert after Related Charts section
+                pattern = r'(<p><strong>Related Charts:</strong>.*?</p>\s*<p>&nbsp;</p>)'
+                updated_html = re.sub(pattern, r'\1' + '\n' + related_section, existing_html, flags=re.DOTALL)
+                return updated_html
+            else:
+                # Append to end of HTML
+                return existing_html + '\n' + related_section

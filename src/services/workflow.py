@@ -12,6 +12,7 @@ from .chatgpt_service import ChatGPTService
 from .data_field_analyzer import DataFieldAnalyzer
 from .html_formatter import HTMLFormatter
 from .intercom_service import IntercomService
+from .relationship_service import RelationshipService
 from .logger import Logger
 
 
@@ -65,6 +66,11 @@ class WorkflowOrchestrator:
             data_dict_collection_id=intercom_data_dict_collection_id,
             chart_collection_id=intercom_chart_collection_id,
             article_collection_id=intercom_article_collection_id
+        )
+        self.relationship_service = RelationshipService(
+            google_sheets_service=self.google_sheets_service,
+            html_formatter=self.html_formatter,
+            intercom_service=self.intercom_service
         )
 
         # Configuration
@@ -273,10 +279,7 @@ class WorkflowOrchestrator:
                     )
 
                     if result['status'] == 'skipped':
-                        skipped_charts.append({
-                            'chart': chart,
-                            'reason': result['reason']
-                        })
+                        skipped_charts.append(result)  # Store full result for relationship updates
                         print(f"⊘ Skipped: {result['reason']}")
                     else:
                         processed_charts.append(result)
@@ -289,7 +292,7 @@ class WorkflowOrchestrator:
                         'reason': f"Error: {str(e)}"
                     })
 
-            # Final Step: Create Article HTML with embedded charts
+            # Create Article HTML with embedded charts
             article_intercom_url = None
             print(f"\n{'='*60}")
             print("Creating article with embedded charts...")
@@ -340,43 +343,37 @@ class WorkflowOrchestrator:
                         )
                         print(f"✓ Article logged to Google Sheets")
 
-                        # Update chart articles with related article link
-                        print(f"\n{'='*60}")
-                        print("Updating chart articles with related article link...")
-                        print(f"{'='*60}\n")
+                        # === STEP: Update Relationships ===
+                        # Now that ALL articles are published with URLs, update relationships
 
-                        for chart_result in processed_charts:
-                            if chart_result['status'] == 'success' and chart_result.get('chart_article_id'):
-                                try:
-                                    # Regenerate chart HTML with related charts (currently blank)
-                                    updated_chart_html = self.html_formatter.format_chart_with_json_html(
-                                        chart_name=chart_result['chart']['title'],
-                                        image_url=chart_result['chart']['image_url'],
-                                        category=chart_result.get('category', 'General'),
-                                        country='Global',
-                                        shows_text=chart_result['chart']['shows'],
-                                        best_used_for='TBC',
-                                        considerations='TBC',
-                                        accuracy='TBC',
-                                        chart_json=chart_result.get('chart_json', {}),
-                                        field_mapping=chart_result.get('field_mapping', {}),
-                                        related_charts_names=None,
-                                        related_charts_urls=None
-                                    )
+                        # 1. Build field → charts mapping
+                        field_to_charts_map = self.relationship_service.build_field_to_charts_map(
+                            processed_charts=processed_charts,
+                            chart_library_sheet=self.google_sheets_chart_library_sheet
+                        )
 
-                                    # Update the chart article
-                                    update_result = self.intercom_service.update_article(
-                                        article_id=chart_result['chart_article_id'],
-                                        body_html=updated_chart_html
-                                    )
+                        # 2. Update data fields with Related Charts
+                        self.relationship_service.update_data_fields_with_relationships(
+                            field_to_charts_map=field_to_charts_map,
+                            processed_charts=processed_charts,
+                            data_dict_sheet=self.google_sheets_data_dict_sheet
+                        )
 
-                                    if update_result['status'] == 'success':
-                                        print(f"✓ Updated chart: {chart_result['chart']['title']}")
-                                    else:
-                                        print(f"✗ Failed to update chart {chart_result['chart']['title']}: {update_result.get('message', 'Unknown error')}")
+                        # 3. Build chart → articles mapping
+                        chart_to_articles_map = self.relationship_service.build_chart_to_articles_map(
+                            processed_charts=processed_charts,
+                            article_title=cleaned_data['article_title'],
+                            article_url=article_intercom_url,
+                            article_library_sheet=self.google_sheets_article_library_sheet
+                        )
 
-                                except Exception as e:
-                                    print(f"✗ Error updating chart {chart_result['chart']['title']}: {str(e)}")
+                        # 4. Update charts with Related Articles
+                        self.relationship_service.update_charts_with_relationships(
+                            chart_to_articles_map=chart_to_articles_map,
+                            processed_charts=processed_charts,
+                            chart_library_sheet=self.google_sheets_chart_library_sheet,
+                            skipped_charts=skipped_charts
+                        )
 
                     else:
                         print(f"✗ Failed to publish article: {article_result.get('message', 'Unknown error')}")
@@ -500,7 +497,7 @@ class WorkflowOrchestrator:
                         preview_mode=preview_mode  # Pass through preview mode
                     )
                     if result['status'] == 'skipped':
-                        skipped_charts.append({'chart': chart, 'reason': result['reason']})
+                        skipped_charts.append(result)  # Store full result for relationship updates
                         print(f"⊘ Skipped: {result['reason']}")
                     elif result['status'] == 'preview':
                         # In preview mode, collect all comparisons from this chart
@@ -513,7 +510,7 @@ class WorkflowOrchestrator:
                     print(f"✗ Error: {str(e)}")
                     skipped_charts.append({'chart': chart, 'reason': str(e)})
 
-            # Step 5: Generate updated article HTML
+            # Generate updated article HTML
             # In preview mode, use actual chart data from comparisons
             if preview_mode:
                 # Extract chart data from comparisons (they include image_url and shows)
@@ -595,6 +592,38 @@ class WorkflowOrchestrator:
                     intercom_id=intercom_article_id,
                     html=article_html,
                     sheet_name=self.google_sheets_article_library_sheet
+                )
+
+                # === STEP: Update Relationships ===
+                # Now that ALL articles are published with URLs, update relationships
+
+                # 1. Build field → charts mapping
+                field_to_charts_map = self.relationship_service.build_field_to_charts_map(
+                    processed_charts=processed_charts,
+                    chart_library_sheet=self.google_sheets_chart_library_sheet
+                )
+
+                # 2. Update data fields with Related Charts
+                self.relationship_service.update_data_fields_with_relationships(
+                    field_to_charts_map=field_to_charts_map,
+                    processed_charts=processed_charts,
+                    data_dict_sheet=self.google_sheets_data_dict_sheet
+                )
+
+                # 3. Build chart → articles mapping
+                chart_to_articles_map = self.relationship_service.build_chart_to_articles_map(
+                    processed_charts=processed_charts,
+                    article_title=cleaned_data['article_title'],
+                    article_url=article_intercom_url,
+                    article_library_sheet=self.google_sheets_article_library_sheet
+                )
+
+                # 4. Update charts with Related Articles
+                self.relationship_service.update_charts_with_relationships(
+                    chart_to_articles_map=chart_to_articles_map,
+                    processed_charts=processed_charts,
+                    chart_library_sheet=self.google_sheets_chart_library_sheet,
+                    skipped_charts=skipped_charts
                 )
 
                 print(f"\n{'='*60}")
@@ -875,8 +904,20 @@ class WorkflowOrchestrator:
             # Clean field names in chart JSON (remove Tableau prefixes)
             chart_json = self._clean_chart_json_fields(chart_json)
 
+            # Query existing relationships for preview mode
+            related_articles_names = None
+            related_articles_urls = None
+            if preview_mode:
+                related_articles_result = self.google_sheets_service.get_related_articles_for_chart(
+                    chart_title=chart['title'],
+                    sheet_name=self.google_sheets_article_library_sheet
+                )
+                if related_articles_result['status'] == 'success' and related_articles_result.get('related_articles'):
+                    related_articles = related_articles_result['related_articles']
+                    related_articles_names = [a['title'] for a in related_articles]
+                    related_articles_urls = [a['url'] for a in related_articles]
+
             # Create detailed chart HTML
-            # Note: related_charts lists are None (blank for now)
             chart_html = self.html_formatter.format_chart_with_json_html(
                 chart_name=chart['title'],
                 image_url=chart['image_url'],
@@ -889,7 +930,9 @@ class WorkflowOrchestrator:
                 chart_json=chart_json,
                 field_mapping=field_mapping,
                 related_charts_names=None,  # Blank for now
-                related_charts_urls=None
+                related_charts_urls=None,
+                related_articles_names=related_articles_names,
+                related_articles_urls=related_articles_urls
             )
 
             # If preview mode, collect all comparisons (data fields + chart) and return
@@ -968,6 +1011,7 @@ class WorkflowOrchestrator:
             'fields_skipped': skipped_fields,
             'chart_intercom_url': chart_intercom_url,
             'chart_article_id': chart_article_id,
+            'chart_html': chart_html,  # Include HTML for relationship injection
             'chart_json': chart_json,
             'field_mapping': field_mapping,
             'category': category
@@ -1071,9 +1115,40 @@ class WorkflowOrchestrator:
 
         # Step 4: Format HTML
         print(f"      [4/6] Formatting HTML...")
+
+        # Query existing relationships for preview mode
+        # IMPORTANT: Include BOTH existing relationships AND current chart
+        related_charts_names = None
+        related_charts_urls = None
+        if preview_mode:
+            related_charts_list = []
+
+            # Add the CURRENT chart that's using this field
+            related_charts_list.append({
+                'title': chart_title,
+                'url': '#'  # URL not available yet in preview mode
+            })
+
+            # Also query existing relationships from Google Sheets
+            related_charts_result = self.google_sheets_service.get_related_charts_for_field(
+                field_name=field_name,
+                sheet_name=self.google_sheets_chart_library_sheet
+            )
+            if related_charts_result['status'] == 'success' and related_charts_result.get('related_charts'):
+                for chart_info in related_charts_result['related_charts']:
+                    # Avoid duplicates
+                    if chart_info not in related_charts_list:
+                        related_charts_list.append(chart_info)
+
+            if related_charts_list:
+                related_charts_names = [c['title'] for c in related_charts_list]
+                related_charts_urls = [c['url'] for c in related_charts_list]
+
         html_content = self.html_formatter.format_data_field_html(
             field_name=human_name,
-            ai_json=field_analysis['analysis']
+            ai_json=field_analysis['analysis'],
+            related_charts_names=related_charts_names,
+            related_charts_urls=related_charts_urls
         )
 
         # If preview mode, return comparison data without publishing
@@ -1127,5 +1202,7 @@ class WorkflowOrchestrator:
             'field_name': field_name,
             'human_name': human_name,
             'intercom_url': intercom_result['article_url'],
-            'intercom_article_id': intercom_result['article_id']
+            'intercom_article_id': intercom_result['article_id'],
+            'ai_analysis': field_analysis['analysis'],  # Needed for regenerating HTML with related charts
+            'field_html': html_content  # Include HTML for relationship injection
         }

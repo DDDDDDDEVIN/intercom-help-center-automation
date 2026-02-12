@@ -304,3 +304,100 @@ class GoogleSheetsService:
             'found_count': len(search_list) - len(missing_items),
             'missing_items': missing_items
         }
+
+    def get_related_charts_for_field(self, field_name: str, sheet_name: str = 'chart_library') -> Dict:
+        """
+        Find all charts that reference this data field by searching chart HTML
+
+        Args:
+            field_name: The field name to search for
+            sheet_name: Chart library sheet name
+
+        Returns:
+            {'status': 'success', 'related_charts': [{'title': str, 'url': str}], 'total_count': int}
+        """
+        params = {"sheet_name": sheet_name}
+
+        try:
+            response = requests.get(
+                self.sheet_api_url,
+                params=params,
+                allow_redirects=True,
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                return {'status': 'error', 'related_charts': []}
+
+            all_rows = response.json()
+            related_charts = []
+
+            # Search HTML column (index 4) for field name references
+            for row in all_rows:
+                if len(row) >= 5:
+                    html_content = str(row[4])
+                    # Check if field appears in HTML (in links or text)
+                    if field_name in html_content:
+                        chart_title = str(row[1]).strip()  # human_name
+                        chart_url = str(row[2]).strip()    # intercom_url
+                        related_charts.append({
+                            'title': chart_title,
+                            'url': chart_url
+                        })
+
+            return {
+                'status': 'success',
+                'related_charts': related_charts,
+                'total_count': len(related_charts)
+            }
+
+        except requests.exceptions.RequestException:
+            return {'status': 'error', 'related_charts': []}
+
+    def get_related_articles_for_chart(self, chart_title: str, sheet_name: str = 'article_library') -> Dict:
+        """
+        Find all articles that reference this chart
+
+        Args:
+            chart_title: The chart title to search for
+            sheet_name: Article library sheet name
+
+        Returns:
+            {'status': 'success', 'related_articles': [{'title': str, 'url': str}], 'total_count': int}
+        """
+        params = {"sheet_name": sheet_name}
+
+        try:
+            response = requests.get(
+                self.sheet_api_url,
+                params=params,
+                allow_redirects=True,
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                return {'status': 'error', 'related_articles': []}
+
+            all_rows = response.json()
+            related_articles = []
+
+            # Search HTML column (index 4) for chart title references
+            for row in all_rows:
+                if len(row) >= 5:
+                    html_content = str(row[4])
+                    if chart_title in html_content:
+                        article_title = str(row[1]).strip()
+                        article_url = str(row[2]).strip()
+                        related_articles.append({
+                            'title': article_title,
+                            'url': article_url
+                        })
+
+            return {
+                'status': 'success',
+                'related_articles': related_articles,
+                'total_count': len(related_articles)
+            }
+
+        except requests.exceptions.RequestException:
+            return {'status': 'error', 'related_articles': []}
