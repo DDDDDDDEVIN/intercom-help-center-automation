@@ -3,35 +3,72 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Joomla Articles - Intercom Publisher</title>
+    <title>Intercom Help Center Article Generator</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Joomla Articles</h1>
-            <p>Select articles to publish to Intercom Help Center</p>
+            <h1>Intercom Help Center Article Generator</h1>
+            <div class="header-tabs">
+                <button class="tab-btn active" data-tab="joomla">Joomla Articles</button>
+                <button class="tab-btn" data-tab="intercom">Manage Intercom</button>
+            </div>
         </header>
 
-        <div class="actions">
-            <button id="refreshBtn" class="btn btn-secondary">Refresh Articles</button>
-            <button id="selectAllBtn" class="btn btn-secondary">Select All</button>
-            <button id="deselectAllBtn" class="btn btn-secondary">Deselect All</button>
-            <button id="publishBtn" class="btn btn-primary">Publish Selected</button>
-            <button id="updateBtn" class="btn btn-warning">Update Selected</button>
+        <!-- Joomla Articles Tab -->
+        <div id="joomlaTab" class="tab-content active">
+            <p class="tab-description">Select articles to publish to Intercom Help Center</p>
+
+            <div class="actions">
+                <button id="refreshBtn" class="btn btn-secondary">Refresh Articles</button>
+                <button id="selectAllBtn" class="btn btn-secondary">Select All</button>
+                <button id="deselectAllBtn" class="btn btn-secondary">Deselect All</button>
+                <button id="publishBtn" class="btn btn-primary">Publish Selected</button>
+                <button id="updateBtn" class="btn btn-warning">Update Selected</button>
+            </div>
+
+            <div id="loading" class="loading" style="display: none;">
+                Loading articles...
+            </div>
+
+            <!-- Progress Display -->
+            <div id="progressPanel" class="progress-panel" style="display: none;">
+                <h3>Progress</h3>
+                <div class="progress-bar-container">
+                    <div id="progressBar" class="progress-bar" style="width: 0%"></div>
+                </div>
+                <div id="progressText" class="progress-text">0 / 0 completed</div>
+            </div>
+
+            <div id="articleList" class="article-list">
+                <!-- Articles will be loaded here dynamically -->
+            </div>
+
+            <div id="statusPanel" class="status-panel" style="display: none;">
+                <h3>Processing Status</h3>
+                <div id="statusList"></div>
+            </div>
         </div>
 
-        <div id="loading" class="loading" style="display: none;">
-            Loading articles...
-        </div>
+        <!-- Intercom Management Tab -->
+        <div id="intercomTab" class="tab-content">
+            <p class="tab-description">Manage articles in Intercom collections</p>
 
-        <div id="articleList" class="article-list">
-            <!-- Articles will be loaded here dynamically -->
-        </div>
+            <div class="actions">
+                <button id="refreshIntercomBtn" class="btn btn-secondary">Refresh Intercom Articles</button>
+                <button id="selectAllIntercomBtn" class="btn btn-secondary">Select All</button>
+                <button id="deselectAllIntercomBtn" class="btn btn-secondary">Deselect All</button>
+                <button id="deleteSelectedBtn" class="btn btn-danger" disabled>Delete Selected</button>
+            </div>
 
-        <div id="statusPanel" class="status-panel" style="display: none;">
-            <h3>Processing Status</h3>
-            <div id="statusList"></div>
+            <div id="intercomLoading" class="loading" style="display: none;">
+                Loading Intercom articles...
+            </div>
+
+            <div id="intercomArticleList" class="intercom-article-list">
+                <!-- Intercom articles will be loaded here -->
+            </div>
         </div>
     </div>
 

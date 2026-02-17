@@ -553,6 +553,164 @@ def confirm_article_updates():
         }), 500
 
 
+@app.route('/api/intercom/articles', methods=['GET'])
+def get_intercom_articles():
+    """
+    API endpoint to fetch all articles from Intercom and group by collection
+
+    Returns:
+        JSON with articles grouped by human-readable collection names
+    """
+    try:
+        # Collection ID to human-readable name mapping
+        collection_mappings = {
+            os.getenv('INTERCOM_ARTICLE_COLLECTION_ID'): 'Article Collection',
+            os.getenv('INTERCOM_CHART_COLLECTION_ID'): 'Chart Library',
+            os.getenv('INTERCOM_DATA_DICT_COLLECTION_ID'): 'Data Dictionary'
+        }
+
+        # Fetch ALL articles from Intercom
+        result = orchestrator.intercom_service.list_all_articles()
+
+        if result.get('status') != 'success':
+            return jsonify({
+                'status': 'error',
+                'message': result.get('message', 'Failed to fetch articles'),
+                'collections': {}
+            }), 500
+
+        all_articles = result.get('articles', [])
+
+        # Initialize collections
+        collections = {name: [] for name in collection_mappings.values()}
+
+        # Group articles by parent_id - loop through articles ONCE
+        # Convert parent_id to string for comparison
+        for article in all_articles:
+            parent_id = str(article.get('parent_id')) if article.get('parent_id') else None
+            if parent_id in collection_mappings:
+                collection_name = collection_mappings[parent_id]
+                collections[collection_name].append(article)
+
+        return jsonify({
+            'status': 'success',
+            'collections': collections
+        }), 200
+
+    except Exception as e:
+        print(f"[API] Error fetching Intercom articles: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'collections': {}
+        }), 500
+
+
+@app.route('/api/intercom/articles/delete', methods=['POST'])
+def delete_intercom_articles():
+    """
+    API endpoint to delete articles from Intercom AND Google Sheets
+
+    Expected POST body:
+    {
+        "articles": [
+            {"id": "123", "title": "Article Title", "collection": "Article Collection"},
+            {"id": "456", "title": "Chart Title", "collection": "Chart Library"}
+        ]
+    }
+
+    Returns:
+        JSON with deletion results
+    """
+    try:
+        data = request.get_json()
+
+        if not data or 'articles' not in data:
+            return jsonify({
+                'status': 'error',
+                'message': 'Missing articles in request body'
+            }), 400
+
+        articles = data['articles']
+
+        if not isinstance(articles, list):
+            return jsonify({
+                'status': 'error',
+                'message': 'articles must be an array'
+            }), 400
+
+        # Map collection names to sheet names
+        collection_to_sheet = {
+            'Article Collection': 'article_library',
+            'Chart Library': 'chart_library',
+            'Data Dictionary': 'data_dictionary'
+        }
+
+        deleted_count = 0
+        failed_count = 0
+        results = []
+
+        # Delete each article from both Intercom and Google Sheets
+        for article in articles:
+            article_id = article.get('id')
+            article_title = article.get('title')
+            collection_name = article.get('collection')
+
+            try:
+                # Delete from Intercom
+                intercom_result = orchestrator.intercom_service.delete_article(article_id)
+
+                if intercom_result.get('status') != 'success':
+                    failed_count += 1
+                    results.append({
+                        'article_id': article_id,
+                        'title': article_title,
+                        'status': 'error',
+                        'message': f"Intercom deletion failed: {intercom_result.get('message', 'Unknown error')}"
+                    })
+                    continue
+
+                # Delete from Google Sheets
+                sheet_name = collection_to_sheet.get(collection_name)
+                if sheet_name:
+                    orchestrator.google_sheets_service.delete_row_by_value(
+                        value_to_match=article_id,
+                        column_index=4,  # Column D (intercom_id)
+                        sheet_name=sheet_name
+                    )
+
+                deleted_count += 1
+                results.append({
+                    'article_id': article_id,
+                    'title': article_title,
+                    'status': 'success'
+                })
+
+            except Exception as e:
+                failed_count += 1
+                results.append({
+                    'article_id': article_id,
+                    'title': article_title,
+                    'status': 'error',
+                    'message': str(e)
+                })
+
+        return jsonify({
+            'status': 'success',
+            'deleted_count': deleted_count,
+            'failed_count': failed_count,
+            'total': len(articles),
+            'results': results
+        }), 200
+
+    except Exception as e:
+        print(f"[API] Error in delete articles: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)

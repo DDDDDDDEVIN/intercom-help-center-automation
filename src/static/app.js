@@ -4,7 +4,7 @@ let currentNestedStructure = null;  // Store nested structure for re-rendering
 let loadedPreviews = new Set();  // Track which previews have been loaded
 let publishedArticles = new Set();  // Track which articles are published (by title)
 
-// DOM Elements
+// DOM Elements - Joomla Tab
 const articleList = document.getElementById('articleList');
 const loading = document.getElementById('loading');
 const statusPanel = document.getElementById('statusPanel');
@@ -14,16 +14,45 @@ const selectAllBtn = document.getElementById('selectAllBtn');
 const deselectAllBtn = document.getElementById('deselectAllBtn');
 const publishBtn = document.getElementById('publishBtn');
 const updateBtn = document.getElementById('updateBtn');
+const progressPanel = document.getElementById('progressPanel');
+const progressBar = document.getElementById('progressBar');
+const progressText = document.getElementById('progressText');
+
+// DOM Elements - Intercom Tab
+const intercomArticleList = document.getElementById('intercomArticleList');
+const intercomLoading = document.getElementById('intercomLoading');
+const refreshIntercomBtn = document.getElementById('refreshIntercomBtn');
+const selectAllIntercomBtn = document.getElementById('selectAllIntercomBtn');
+const deselectAllIntercomBtn = document.getElementById('deselectAllIntercomBtn');
+const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
+
+// Tracking
+let selectedIntercomArticles = new Map();
+let intercomArticlesLoaded = false;  // Track if Intercom articles have been loaded
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
+    // Load Joomla articles on startup
     loadArticles();
+    // Intercom articles will lazy-load when switching to that tab
 
+    // Joomla tab event listeners
     refreshBtn.addEventListener('click', loadArticles);
     selectAllBtn.addEventListener('click', selectAll);
     deselectAllBtn.addEventListener('click', deselectAll);
     publishBtn.addEventListener('click', publishSelected);
     updateBtn.addEventListener('click', updateSelected);
+
+    // Intercom tab event listeners
+    refreshIntercomBtn.addEventListener('click', loadIntercomArticles);
+    selectAllIntercomBtn.addEventListener('click', selectAllIntercom);
+    deselectAllIntercomBtn.addEventListener('click', deselectAllIntercom);
+    deleteSelectedBtn.addEventListener('click', deleteSelectedIntercom);
+
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => switchTab(e.target.dataset.tab));
+    });
 });
 
 // Load published articles from Google Sheets
@@ -148,6 +177,7 @@ function renderNestedStructure(structure, level = 0, pathPrefix = '') {
             // Render articles at this level
             html += value.map(article => {
                 const isPublished = publishedArticles.has(article.title);
+                const joomlaUrl = `https://rocket.sunwiz.com.au/sites/default/index.php?option=com_content&view=article&id=${article.id}`;
                 return `
                 <div class="article-item ${isPublished ? 'published' : ''}" style="margin-left: ${level * 30}px;">
                     <input
@@ -159,13 +189,18 @@ function renderNestedStructure(structure, level = 0, pathPrefix = '') {
                     <div class="article-info">
                         <div class="article-title-row">
                             <div class="article-title">${escapeHtml(article.title)}${isPublished ? ' <span class="published-badge">✓ Published</span>' : ''}</div>
-                            <button
-                                class="preview-btn"
-                                onclick="togglePreview('${article.id}')"
-                                title="Preview article"
-                            >
-                                Preview
-                            </button>
+                            <div class="article-actions">
+                                <a href="${joomlaUrl}" target="_blank" class="btn-link" title="View original in Joomla">
+                                    View Original
+                                </a>
+                                <button
+                                    class="preview-btn"
+                                    onclick="togglePreview('${article.id}')"
+                                    title="Preview article"
+                                >
+                                    Preview
+                                </button>
+                            </div>
                         </div>
                         <div class="article-meta">
                             <span class="article-id">ID: ${article.id}</span>
@@ -334,21 +369,47 @@ function deselectAll() {
 // Update publish and update button states
 function updatePublishButton() {
     const isDisabled = selectedArticles.size === 0;
-    publishBtn.disabled = isDisabled;
     updateBtn.disabled = isDisabled;
-    publishBtn.textContent = `Publish Selected (${selectedArticles.size})`;
     updateBtn.textContent = `Update Selected (${selectedArticles.size})`;
+
+    // Check if ALL selected articles are already published
+    let allPublished = true;
+
+    for (const articleId of selectedArticles) {
+        const article = articles.find(a => a.id === articleId);
+        if (article && !publishedArticles.has(article.title)) {
+            // Found an unpublished article
+            allPublished = false;
+            break;
+        }
+    }
+
+    // Disable publish button if no selection OR all selected are published
+    publishBtn.disabled = isDisabled || allPublished;
+    publishBtn.textContent = allPublished && selectedArticles.size > 0
+        ? `Already Published (${selectedArticles.size})`
+        : `Publish Selected (${selectedArticles.size})`;
 }
 
 // Publish selected articles
 async function publishSelected() {
     if (selectedArticles.size === 0) return;
 
-    const articleIds = Array.from(selectedArticles);
+    // Filter out published articles
+    const articleIds = Array.from(selectedArticles).filter(id => {
+        const article = articles.find(a => a.id === id);
+        return article && !publishedArticles.has(article.title);
+    });
 
-    // Show status panel
+    if (articleIds.length === 0) {
+        alert('All selected articles are already published!');
+        return;
+    }
+
+    // Show status and progress panels
     statusPanel.style.display = 'block';
     statusList.innerHTML = '';
+    showProgress(0, articleIds.length);
 
     // Disable publish button
     publishBtn.disabled = true;
@@ -381,7 +442,11 @@ async function publishSelected() {
         const result = await response.json();
 
         if (result.results) {
+            let completedCount = 0;
             result.results.forEach(item => {
+                completedCount++;
+                showProgress(completedCount, articleIds.length);
+
                 const statusElement = document.getElementById(statusItems[item.article_id]);
                 if (statusElement) {
                     statusElement.className = `status-item status-${item.status}`;
@@ -409,6 +474,7 @@ async function publishSelected() {
     } catch (error) {
         showError('Failed to publish articles: ' + error.message);
     } finally {
+        hideProgress();
         publishBtn.disabled = false;
         updatePublishButton();
     }
@@ -662,4 +728,206 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// ==================== NEW FEATURES ====================
+
+// Tab switching
+function switchTab(tabName) {
+    // Update tab buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+    });
+
+    // Update tab content
+    document.getElementById('joomlaTab').classList.toggle('active', tabName === 'joomla');
+    document.getElementById('intercomTab').classList.toggle('active', tabName === 'intercom');
+
+    // Lazy load Intercom articles when first switching to that tab
+    if (tabName === 'intercom' && !intercomArticlesLoaded) {
+        loadIntercomArticles();
+    }
+}
+
+// Load Intercom articles from all collections
+async function loadIntercomArticles() {
+    intercomLoading.style.display = 'block';
+    intercomArticleList.innerHTML = '';
+    selectedIntercomArticles.clear();
+    deleteSelectedBtn.disabled = true;
+
+    try {
+        const response = await fetch('/api/intercom/articles');
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            renderIntercomArticles(data.collections);
+            intercomArticlesLoaded = true;  // Mark as loaded
+        } else {
+            showIntercomError('Failed to load Intercom articles: ' + (data.message || 'Unknown error'));
+        }
+    } catch (error) {
+        showIntercomError('Network error: ' + error.message);
+    } finally {
+        intercomLoading.style.display = 'none';
+    }
+}
+
+// Render Intercom articles grouped by collection
+function renderIntercomArticles(collections) {
+    if (!collections || Object.keys(collections).length === 0) {
+        intercomArticleList.innerHTML = `
+            <div class="empty-state">
+                <p>No articles found in Intercom</p>
+            </div>
+        `;
+        return;
+    }
+
+    let html = '';
+    for (const [collectionName, articles] of Object.entries(collections)) {
+        html += `
+            <div class="intercom-collection">
+                <h3 class="intercom-collection-title">${escapeHtml(collectionName)} (${articles.length})</h3>
+                <div class="intercom-articles">
+                    ${articles.map(article => `
+                        <div class="intercom-article-item">
+                            <input
+                                type="checkbox"
+                                class="intercom-checkbox"
+                                data-article-id="${article.id}"
+                                data-article-title="${escapeHtml(article.title)}"
+                                data-collection="${escapeHtml(collectionName)}"
+                            >
+                            <div class="intercom-article-info">
+                                <div class="intercom-article-title">${escapeHtml(article.title)}</div>
+                                <div class="intercom-article-meta">
+                                    <span>ID: ${article.id}</span>
+                                    ${article.url ? `<a href="${article.url}" target="_blank" class="intercom-link">View in Intercom →</a>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    intercomArticleList.innerHTML = html;
+
+    // Attach checkbox listeners
+    document.querySelectorAll('.intercom-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            const articleId = e.target.dataset.articleId;
+            const articleTitle = e.target.dataset.articleTitle;
+            const collection = e.target.dataset.collection;
+
+            if (e.target.checked) {
+                selectedIntercomArticles.set(articleId, {
+                    title: articleTitle,
+                    collection: collection
+                });
+            } else {
+                selectedIntercomArticles.delete(articleId);
+            }
+            updateDeleteButton();
+        });
+    });
+}
+
+// Update delete button state
+function updateDeleteButton() {
+    const isDisabled = selectedIntercomArticles.size === 0;
+    deleteSelectedBtn.disabled = isDisabled;
+    deleteSelectedBtn.textContent = `Delete Selected (${selectedIntercomArticles.size})`;
+}
+
+// Select all Intercom articles
+function selectAllIntercom() {
+    document.querySelectorAll('.intercom-checkbox').forEach(checkbox => {
+        checkbox.checked = true;
+        const articleId = checkbox.dataset.articleId;
+        const articleTitle = checkbox.dataset.articleTitle;
+        const collection = checkbox.dataset.collection;
+        selectedIntercomArticles.set(articleId, {
+            title: articleTitle,
+            collection: collection
+        });
+    });
+    updateDeleteButton();
+}
+
+// Deselect all Intercom articles
+function deselectAllIntercom() {
+    document.querySelectorAll('.intercom-checkbox').forEach(checkbox => {
+        checkbox.checked = false;
+    });
+    selectedIntercomArticles.clear();
+    updateDeleteButton();
+}
+
+// Delete selected Intercom articles
+async function deleteSelectedIntercom() {
+    if (selectedIntercomArticles.size === 0) return;
+
+    // Build articles array with metadata
+    const articles = Array.from(selectedIntercomArticles.entries()).map(([id, meta]) => ({
+        id: id,
+        title: meta.title,
+        collection: meta.collection
+    }));
+
+    if (!confirm(`Are you sure you want to delete ${articles.length} article(s) from Intercom and Google Sheets? This action cannot be undone.`)) {
+        return;
+    }
+
+    deleteSelectedBtn.disabled = true;
+    deleteSelectedBtn.textContent = 'Deleting...';
+
+    try {
+        const response = await fetch('/api/intercom/articles/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({articles: articles})
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            alert(`Successfully deleted ${result.deleted_count} article(s)`);
+            loadIntercomArticles(); // Refresh the list
+        } else {
+            alert('Failed to delete articles: ' + (result.message || 'Unknown error'));
+        }
+    } catch (error) {
+        alert('Network error: ' + error.message);
+    } finally {
+        deleteSelectedBtn.disabled = false;
+        updateDeleteButton();
+    }
+}
+
+// Show error in Intercom tab
+function showIntercomError(message) {
+    intercomArticleList.innerHTML = `
+        <div class="empty-state">
+            <p style="color: #d32f2f;">Error</p>
+            <small>${escapeHtml(message)}</small>
+        </div>
+    `;
+}
+
+// Show progress bar
+function showProgress(current, total) {
+    progressPanel.style.display = 'block';
+    const percentage = total > 0 ? (current / total) * 100 : 0;
+    progressBar.style.width = `${percentage}%`;
+    progressText.textContent = `${current} / ${total} completed`;
+}
+
+// Hide progress bar
+function hideProgress() {
+    progressPanel.style.display = 'none';
+    progressBar.style.width = '0%';
+    progressText.textContent = '0 / 0 completed';
 }

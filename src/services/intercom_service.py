@@ -158,3 +158,177 @@ class IntercomService:
                 "status": "error",
                 "message": f"Failed to update Intercom article: {str(e)}"
             }
+
+    def list_articles(self, collection_id: str) -> Dict:
+        """
+        List all articles in a specific collection
+
+        Args:
+            collection_id: Collection ID to list articles from
+
+        Returns:
+            Dictionary with list of articles
+        """
+        url = f"{self.base_url}/articles"
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Accept": "application/json",
+            "Intercom-Version": "2.14"
+        }
+
+        try:
+            # Fetch articles with pagination
+            all_articles = []
+            page = 1
+            per_page = 50
+
+            while True:
+                params = {
+                    "per_page": per_page,
+                    "page": page
+                }
+
+                response = requests.get(
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=30
+                )
+                response.raise_for_status()
+
+                data = response.json()
+                articles = data.get("data", [])
+
+                # Filter by collection_id
+                for article in articles:
+                    if article.get("parent_id") == collection_id:
+                        all_articles.append({
+                            "id": article.get("id"),
+                            "title": article.get("title"),
+                            "url": article.get("url"),
+                            "state": article.get("state")
+                        })
+
+                # Check if there are more pages
+                if len(articles) < per_page:
+                    break
+
+                page += 1
+
+            return {
+                "status": "success",
+                "articles": all_articles,
+                "count": len(all_articles)
+            }
+
+        except requests.exceptions.RequestException as e:
+            return {
+                "status": "error",
+                "message": f"Failed to list Intercom articles: {str(e)}",
+                "articles": []
+            }
+
+    def list_all_articles(self) -> Dict:
+        """
+        List ALL articles from Intercom (without filtering by collection)
+
+        Returns:
+            Dictionary with list of all articles including their parent_id
+        """
+        url = f"{self.base_url}/articles"
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Accept": "application/json",
+            "Intercom-Version": "2.14"
+        }
+
+        try:
+            # Fetch articles with pagination
+            all_articles = []
+            page = 1
+            per_page = 50
+
+            while True:
+                params = {
+                    "per_page": per_page,
+                    "page": page
+                }
+
+                response = requests.get(
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=30
+                )
+                response.raise_for_status()
+
+                data = response.json()
+                articles = data.get("data", [])
+
+                # Add ALL articles (no filtering)
+                for article in articles:
+                    all_articles.append({
+                        "id": article.get("id"),
+                        "title": article.get("title"),
+                        "url": article.get("url"),
+                        "state": article.get("state"),
+                        "parent_id": article.get("parent_id"),  # Include parent_id for grouping
+                        "parent_type": article.get("parent_type")
+                    })
+
+                # Check if there are more pages
+                if len(articles) < per_page:
+                    break
+
+                page += 1
+
+            return {
+                "status": "success",
+                "articles": all_articles,
+                "count": len(all_articles)
+            }
+
+        except requests.exceptions.RequestException as e:
+            return {
+                "status": "error",
+                "message": f"Failed to list all Intercom articles: {str(e)}",
+                "articles": []
+            }
+
+    def delete_article(self, article_id: str) -> Dict:
+        """
+        Delete an article from Intercom
+
+        Args:
+            article_id: Article ID to delete
+
+        Returns:
+            Dictionary with deletion status
+        """
+        url = f"{self.base_url}/articles/{article_id}"
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Accept": "application/json",
+            "Intercom-Version": "2.14"
+        }
+
+        try:
+            response = requests.delete(
+                url,
+                headers=headers,
+                timeout=30
+            )
+            response.raise_for_status()
+
+            return {
+                "status": "success",
+                "article_id": article_id,
+                "message": "Article deleted successfully"
+            }
+
+        except requests.exceptions.RequestException as e:
+            return {
+                "status": "error",
+                "message": f"Failed to delete Intercom article: {str(e)}",
+                "article_id": article_id
+            }

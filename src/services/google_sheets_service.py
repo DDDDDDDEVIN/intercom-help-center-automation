@@ -209,6 +209,67 @@ class GoogleSheetsService:
                 'message': f"Failed to log to Google Sheets: {str(e)}"
             }
 
+    def delete_row_by_value(
+        self,
+        value_to_match: str,
+        column_index: int = 1,
+        sheet_name: str = 'Sheet1'
+    ) -> Dict:
+        """
+        Delete row(s) from Google Sheets by matching a value in a specific column
+
+        Args:
+            value_to_match: The value to search for
+            column_index: Column index to search in (1-based, default 1 for column A)
+            sheet_name: The sheet name to delete from
+
+        Returns:
+            Dictionary with deletion status
+        """
+        # Prepare payload
+        payload = {
+            "action": "delete",
+            "sheet_name": sheet_name,
+            "column_index": column_index,
+            "value_to_match": value_to_match.strip()
+        }
+
+        try:
+            # Send POST request
+            response = requests.post(
+                self.sheet_api_url,
+                json=payload,
+                allow_redirects=True,
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+
+                if result.get('status') == 'success':
+                    return {
+                        'status': 'success',
+                        'message': f"Deleted {result.get('rows_deleted', 0)} row(s) from {sheet_name}",
+                        'rows_deleted': result.get('rows_deleted', 0)
+                    }
+                else:
+                    return {
+                        'status': 'error',
+                        'message': result.get('message', 'Unknown error')
+                    }
+            else:
+                return {
+                    'status': 'error',
+                    'message': f'API Error: {response.status_code}',
+                    'response': response.text
+                }
+
+        except requests.exceptions.RequestException as e:
+            return {
+                'status': 'error',
+                'message': f"Failed to delete from Google Sheets: {str(e)}"
+            }
+
     def batch_lookup(self, search_list: List[str], sheet_name: str = 'data_dictionary') -> Dict:
         """
         Batch lookup multiple items in Google Sheets (single API call)
