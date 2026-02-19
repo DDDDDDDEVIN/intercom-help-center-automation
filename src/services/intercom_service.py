@@ -295,6 +295,40 @@ class IntercomService:
                 "articles": []
             }
 
+    def get_article(self, article_id: str) -> Dict:
+        """
+        Fetch a single article from Intercom by ID
+
+        Args:
+            article_id: The Intercom article ID
+
+        Returns:
+            Dictionary with status and article body HTML
+        """
+        url = f"{self.base_url}/articles/{article_id}"
+        headers = {
+            "Authorization": f"Bearer {self.api_token}",
+            "Accept": "application/json",
+            "Intercom-Version": "2.14"
+        }
+
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+
+            data = response.json()
+            return {
+                "status": "success",
+                "html": data.get("body", "")
+            }
+
+        except requests.exceptions.RequestException as e:
+            return {
+                "status": "error",
+                "message": f"Failed to fetch Intercom article: {str(e)}",
+                "html": ""
+            }
+
     def delete_article(self, article_id: str) -> Dict:
         """
         Delete an article from Intercom

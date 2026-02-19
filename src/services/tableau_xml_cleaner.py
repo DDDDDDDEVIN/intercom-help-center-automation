@@ -140,7 +140,7 @@ class TableauXMLCleaner:
         text = re.sub(r'\[[^\]]+\.[^\]]+\]\.', '', text)
 
         # C. Clean prefixes and suffixes
-        text = re.sub(r'\b(sum|none|avg|min|max|attr|usr|tmn|pcto):', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\b(sum|none|avg|min|max|attr|usr|tmn|pcto|win|med|pcdf|mn):', '', text, flags=re.IGNORECASE)
         text = re.sub(r':(qk|nk|ok)', '', text)
         text = re.sub(r':[0-9]+', '', text)
 

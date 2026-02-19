@@ -65,10 +65,10 @@ class RelationshipService:
                     if field_name not in field_to_charts_map:
                         field_to_charts_map[field_name] = []
 
-                    # Avoid duplicates
-                    chart_info = {'title': chart_title, 'url': chart_url}
-                    if chart_info not in field_to_charts_map[field_name]:
-                        field_to_charts_map[field_name].append(chart_info)
+                    # Avoid duplicates by title
+                    existing_titles = {c['title'] for c in field_to_charts_map[field_name]}
+                    if chart_title not in existing_titles:
+                        field_to_charts_map[field_name].append({'title': chart_title, 'url': chart_url})
 
         # Query existing relationships from Google Sheets
         for field_name in field_to_charts_map.keys():
@@ -77,9 +77,11 @@ class RelationshipService:
                 sheet_name=chart_library_sheet
             )
             if existing_relations['status'] == 'success':
+                existing_titles = {c['title'] for c in field_to_charts_map[field_name]}
                 for chart_info in existing_relations['related_charts']:
-                    if chart_info not in field_to_charts_map[field_name]:
+                    if chart_info['title'] not in existing_titles:
                         field_to_charts_map[field_name].append(chart_info)
+                        existing_titles.add(chart_info['title'])
 
         print(f"✓ Built relationships for {len(field_to_charts_map)} fields")
         return field_to_charts_map
@@ -130,9 +132,11 @@ class RelationshipService:
                 sheet_name=article_library_sheet
             )
             if existing_relations['status'] == 'success':
+                existing_titles = {a['title'] for a in chart_to_articles_map[chart_title]}
                 for article_info in existing_relations['related_articles']:
-                    if article_info not in chart_to_articles_map[chart_title]:
+                    if article_info['title'] not in existing_titles:
                         chart_to_articles_map[chart_title].append(article_info)
+                        existing_titles.add(article_info['title'])
 
         print(f"✓ Built relationships for {len(chart_to_articles_map)} charts")
         return chart_to_articles_map
@@ -285,8 +289,8 @@ class RelationshipService:
 
         for chart_result in all_charts:
             # Handle both successful and skipped charts
-            is_success = chart_result['status'] == 'success'
-            is_skipped = chart_result['status'] == 'skipped'
+            is_success = chart_result.get('status') == 'success'
+            is_skipped = chart_result.get('status') == 'skipped'
 
             if not (is_success or is_skipped):
                 continue
@@ -294,12 +298,22 @@ class RelationshipService:
             # Get chart information
             if is_success:
                 chart_title = chart_result['chart']['title']
+                original_chart_name = chart_result.get('original_chart_name', chart_title)
                 chart_url = chart_result.get('chart_intercom_url', '')
                 chart_id = chart_result.get('chart_article_id', '')
                 chart_html = chart_result.get('chart_html', '')  # From just-generated HTML
             else:  # is_skipped
-                chart_title = chart_result.get('chart_name', '')
+                # Support both 'chart_name' key and nested 'chart'.'title'
+                chart_title = (
+                    chart_result.get('chart_name')
+                    or chart_result.get('chart', {}).get('title', '')
+                )
+                original_chart_name = chart_result.get('original_chart_name', chart_title)
                 chart_url = chart_result.get('intercom_url', '')
+
+                if not chart_title:
+                    skipped_count += 1
+                    continue
 
                 # For skipped charts, need to look up article_id and HTML from Google Sheets
                 lookup_result = self.google_sheets_service.lookup_article_by_title(
@@ -345,7 +359,7 @@ class RelationshipService:
                 if intercom_result['status'] == 'success':
                     # Update Google Sheets with new HTML
                     self.google_sheets_service.log_processed_item(
-                        original_name=chart_title,
+                        original_name=original_chart_name,
                         human_name=chart_title,
                         intercom_url=chart_url,
                         intercom_id=chart_id,

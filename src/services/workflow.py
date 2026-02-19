@@ -38,7 +38,9 @@ class WorkflowOrchestrator:
         intercom_author_id: str = None,
         intercom_data_dict_collection_id: str = None,
         intercom_chart_collection_id: str = None,
-        intercom_article_collection_id: str = None
+        intercom_article_collection_id: str = None,
+        openai_image_detail: str = 'high',
+        openai_text_model: str = 'gpt-4o'
     ):
         self.joomla_service = JoomlaService(
             base_url=joomla_base_url,
@@ -57,7 +59,9 @@ class WorkflowOrchestrator:
         )
         self.chatgpt_service = ChatGPTService(
             api_key=openai_api_key,
-            model=openai_model
+            model=openai_model,
+            image_detail=openai_image_detail,
+            text_model=openai_text_model
         )
         self.html_formatter = HTMLFormatter()
         self.intercom_service = IntercomService(
@@ -167,24 +171,46 @@ class WorkflowOrchestrator:
         Returns:
             Chart JSON with cleaned field names
         """
-        from .data_field_analyzer import DataFieldAnalyzer
         cleaned = chart_json.copy()
 
-        # Clean comma-separated strings (Vertical, Horizontal)
-        if 'Vertical' in cleaned and cleaned['Vertical']:
-            fields = [DataFieldAnalyzer.clean_tableau_field_name(f.strip()) for f in str(cleaned['Vertical']).split(',')]
-            cleaned['Vertical'] = ', '.join(fields)
+        def _parse_display_name(dn):
+            if dn and str(dn).strip().lower() not in ('null', 'none', ''):
+                return str(dn).strip()
+            return None
 
-        if 'Horizontal' in cleaned and cleaned['Horizontal']:
-            fields = [DataFieldAnalyzer.clean_tableau_field_name(f.strip()) for f in str(cleaned['Horizontal']).split(',')]
-            cleaned['Horizontal'] = ', '.join(fields)
+        def _normalize_item(item) -> dict:
+            """Normalize to {'field': original_str, 'display_name': str|None}.
+            Keep field name UNCHANGED so it matches field_mapping keys.
+            display_name is used for rendering; field is used for URL lookup."""
+            if isinstance(item, dict):
+                return {
+                    'field': str(item.get('field', '')).strip(),
+                    'display_name': _parse_display_name(item.get('display_name'))
+                }
+            return {'field': str(item).strip(), 'display_name': None}
 
-        # Clean lists (Dimensions, Measures)
-        if 'Dimensions' in cleaned and isinstance(cleaned['Dimensions'], list):
-            cleaned['Dimensions'] = [DataFieldAnalyzer.clean_tableau_field_name(f) for f in cleaned['Dimensions']]
+        # Normalize all 4 keys to list of {'field', 'display_name'} dicts
+        # then deduplicate by label (display_name if set, else field)
+        for key in ('Vertical', 'Horizontal', 'Dimensions', 'Measures'):
+            val = cleaned.get(key)
+            if not val:
+                continue
+            if isinstance(val, list):
+                raw = [_normalize_item(item) for item in val if item]
+            else:
+                raw = [{'field': f.strip(), 'display_name': None} for f in str(val).split(',') if f.strip()]
 
-        if 'Measures' in cleaned and isinstance(cleaned['Measures'], list):
-            cleaned['Measures'] = [DataFieldAnalyzer.clean_tableau_field_name(f) for f in cleaned['Measures']]
+            # Deduplicate by label; filter blanks and "None" strings
+            seen_labels = set()
+            result = []
+            for item in raw:
+                label = item['display_name'] or item['field']
+                if not label or label.lower() == 'none':
+                    continue
+                if label not in seen_labels:
+                    seen_labels.add(label)
+                    result.append(item)
+            cleaned[key] = result
 
         return cleaned
 
@@ -288,7 +314,10 @@ class WorkflowOrchestrator:
                 except Exception as e:
                     print(f"✗ Error processing chart: {str(e)}")
                     skipped_charts.append({
+                        'status': 'skipped',
                         'chart': chart,
+                        'chart_name': chart['title'],
+                        'original_chart_name': original_chart_name,
                         'reason': f"Error: {str(e)}"
                     })
 
@@ -459,7 +488,14 @@ class WorkflowOrchestrator:
                 )
 
             intercom_article_id = lookup_result['intercom_id']
-            old_html = lookup_result.get('html', '')  # Store old HTML for comparison
+            old_html = lookup_result.get('html', '')
+
+            # Fallback: if HTML not in Google Sheets (old rows), fetch from Intercom directly
+            if not old_html and intercom_article_id:
+                print(f"  HTML not in Google Sheets, fetching from Intercom...")
+                intercom_result = self.intercom_service.get_article(intercom_article_id)
+                old_html = intercom_result.get('html', '')
+
             print(f"✓ Found - Intercom ID: {intercom_article_id}")
 
             # Steps 3-4: Clean HTML and process charts (reuse existing logic)
@@ -701,7 +737,9 @@ class WorkflowOrchestrator:
                     return {
                         'status': 'skipped',
                         'reason': 'Duplicate found in Google Sheets',
-                        'chart': chart
+                        'chart': chart,
+                        'chart_name': chart['title'],
+                        'original_chart_name': original_chart_name
                     }
                 print(f"  ✓ No duplicate found")
         else:
@@ -807,6 +845,16 @@ class WorkflowOrchestrator:
                     target_fields=field_extraction['field_names']
                 )
 
+                # Build display name map from GPT analysis
+                display_name_map = field_extraction.get('display_name_map', {})
+
+                # Also build a normalized version for lookup (handles name transformations by DataFieldAnalyzer)
+                # e.g. "[Field Name]" cleaned to "Field Name" still maps back to its display_name
+                normalized_display_name_map = {
+                    k.replace('[', '').replace(']', '').lower().replace(' ', '').replace('-', ''): v
+                    for k, v in display_name_map.items()
+                }
+
                 # Process each field (field names are already cleaned by DataFieldAnalyzer)
                 for idx, (field_name, field_context) in enumerate(
                     zip(
@@ -817,13 +865,32 @@ class WorkflowOrchestrator:
                 ):
                     print(f"\n    [Field {idx}/{field_contexts_result['total_count']}] {field_name}")
 
+                    # Skip fields not found in Tableau metadata — these are GPT hallucinations
+                    # (visual axis labels, not real Tableau field names)
+                    if field_context.strip() == "Field not found in metadata":
+                        print(f"    ⊘ Skipping: field '{field_name}' is not a real Tableau field (not in XML metadata)")
+                        skipped_fields.append({
+                            'field_name': field_name,
+                            'reason': 'Field not found in Tableau metadata',
+                            'human_name': field_name
+                        })
+                        continue
+
+                    # Resolve display_name: try exact key first, then normalized key
+                    norm_key = field_name.lower().replace(' ', '').replace('-', '')
+                    resolved_display_name = (
+                        display_name_map.get(field_name)
+                        or normalized_display_name_map.get(norm_key)
+                    )
+
                     try:
                         field_result = self._process_single_data_field(
                             field_name=field_name,
                             field_context=field_context,
                             chart_title=chart['title'],
                             check_duplicates=check_duplicates,  # Pass through from parent
-                            preview_mode=preview_mode  # Pass through preview mode
+                            preview_mode=preview_mode,  # Pass through preview mode
+                            display_name=resolved_display_name  # Use GPT display_name if available
                         )
 
                         if field_result['status'] == 'skipped':
@@ -851,6 +918,13 @@ class WorkflowOrchestrator:
         # Step 8: Create detailed Chart HTML with JSON data
         chart_intercom_url = None
         chart_article_id = None
+        chart_html = ''  # Initialize to prevent UnboundLocalError if no fields exist
+        chart_json = {   # Initialize to prevent UnboundLocalError if no fields exist
+            'Vertical': '',
+            'Horizontal': '',
+            'Dimensions': [],
+            'Measures': []
+        }
         # Create chart if there are any fields (processed or skipped)
         if processed_fields or skipped_fields:
             print(f"\n  [7/7] Creating detailed chart article...")
@@ -904,6 +978,23 @@ class WorkflowOrchestrator:
             # Clean field names in chart JSON (remove Tableau prefixes)
             chart_json = self._clean_chart_json_fields(chart_json)
 
+            # Remove fields not found in Tableau metadata from chart HTML
+            # These are GPT visual labels (e.g. axis titles) mistaken for field names
+            fields_not_in_metadata = {
+                f['field_name'].lower().replace(' ', '').replace('-', '')
+                for f in skipped_fields
+                if f.get('reason') == 'Field not found in Tableau metadata'
+            }
+            if fields_not_in_metadata:
+                for key in ('Vertical', 'Horizontal', 'Dimensions', 'Measures'):
+                    val = chart_json.get(key)
+                    if isinstance(val, list):
+                        chart_json[key] = [
+                            item for item in val
+                            if isinstance(item, dict)
+                            and item.get('field', '').lower().replace(' ', '').replace('-', '') not in fields_not_in_metadata
+                        ]
+
             # Query existing relationships for preview mode
             related_articles_names = None
             related_articles_urls = None
@@ -949,6 +1040,11 @@ class WorkflowOrchestrator:
                 old_chart_html = existing_chart_data.get('html', '')
                 chart_intercom_id = existing_chart_data.get('intercom_id', '')
 
+                # Fallback: if HTML not in Google Sheets, fetch from Intercom directly
+                if not old_chart_html and chart_intercom_id:
+                    intercom_result = self.intercom_service.get_article(chart_intercom_id)
+                    old_chart_html = intercom_result.get('html', '')
+
                 comparisons.append({
                     'status': 'preview',
                     'article_type': 'chart',
@@ -986,7 +1082,7 @@ class WorkflowOrchestrator:
                 print(f"  ✓ Chart article published: {chart_intercom_url}")
 
                 # Log to chart_library
-                log_result = self.google_sheets_service.log_processed_item(
+                self.google_sheets_service.log_processed_item(
                     original_name=original_chart_name,
                     human_name=chart['title'],
                     intercom_url=chart_intercom_url,
@@ -998,9 +1094,38 @@ class WorkflowOrchestrator:
             else:
                 print(f"  ✗ Failed to publish chart: {chart_article_result.get('message', 'Unknown error')}")
 
+        # Fallback: in preview mode with 0 fields, still return comparison for the chart
+        # (the if processed_fields or skipped_fields block above was skipped entirely)
+        if preview_mode:
+            old_chart_html = existing_chart_data.get('html', '')
+            chart_intercom_id = existing_chart_data.get('intercom_id', '')
+            if not old_chart_html and chart_intercom_id:
+                intercom_result = self.intercom_service.get_article(chart_intercom_id)
+                old_chart_html = intercom_result.get('html', '')
+            return {
+                'status': 'preview',
+                'comparisons': [{
+                    'status': 'preview',
+                    'article_type': 'chart',
+                    'article_title': chart['title'],
+                    'original_chart_name': original_chart_name,
+                    'old_html': old_chart_html,
+                    'new_html': chart_html,
+                    'intercom_article_id': chart_intercom_id,
+                    'collection_id': self.intercom_service.chart_collection_id,
+                    'image_url': chart['image_url'],
+                    'shows': chart['shows'],
+                    'intercom_url': existing_chart_data.get('intercom_url', '#'),
+                    'message': 'Preview generated - awaiting confirmation'
+                }],
+                'chart': chart,
+                'total_comparisons': 1
+            }
+
         return {
             'status': 'success',
             'chart': chart,
+            'original_chart_name': original_chart_name,
             'workbook_id': workbook_id,
             'xml_context': xml_result['analysis_context'],
             'gpt_analysis': analysis_result['analysis'],
@@ -1023,7 +1148,8 @@ class WorkflowOrchestrator:
         field_context: str,
         chart_title: str,
         check_duplicates: bool = True,
-        preview_mode: bool = False
+        preview_mode: bool = False,
+        display_name: str = None
     ) -> Dict[str, Any]:
         """
         Process a single data field through all steps
@@ -1089,11 +1215,26 @@ class WorkflowOrchestrator:
                 existing_data = lookup_result
                 print(f"      ✓ Found existing data field in Google Sheets")
 
-        # Step 2: Analyze field with ChatGPT
-        print(f"      [2/6] Analyzing field...")
+        # Step 2: Rewrite field name (or use GPT-provided display_name)
+        print(f"      [2/6] Rewriting field name...")
+        human_name = field_name  # Fallback to original
+        if display_name:
+            human_name = display_name
+            print(f"      ✓ Using display name from chart analysis: {human_name}")
+        else:
+            name_rewrite = self.chatgpt_service.rewrite_field_name(
+                field_name=field_name,
+                field_context=field_context
+            )
+            if name_rewrite['status'] == 'success':
+                human_name = name_rewrite['human_name']
+
+        # Step 3: Analyze field with ChatGPT (human_name now always available)
+        print(f"      [3/6] Analyzing field...")
         field_analysis = self.chatgpt_service.analyze_data_field(
             field_name=field_name,
-            field_context=field_context
+            field_context=field_context,
+            human_name=human_name  # Always pass human name regardless of source
         )
 
         if field_analysis['status'] != 'success':
@@ -1101,17 +1242,6 @@ class WorkflowOrchestrator:
                 'status': 'skipped',
                 'reason': f"Analysis failed: {field_analysis.get('message', 'Unknown error')}"
             }
-
-        # Step 3: Rewrite field name
-        print(f"      [3/6] Rewriting field name...")
-        name_rewrite = self.chatgpt_service.rewrite_field_name(
-            field_name=field_name,
-            field_context=field_context
-        )
-
-        human_name = field_name  # Fallback to original
-        if name_rewrite['status'] == 'success':
-            human_name = name_rewrite['human_name']
 
         # Step 4: Format HTML
         print(f"      [4/6] Formatting HTML...")
@@ -1157,6 +1287,11 @@ class WorkflowOrchestrator:
             old_html = existing_data.get('html', '')
             intercom_id = existing_data.get('intercom_id', '')
 
+            # Fallback: if HTML not in Google Sheets, fetch from Intercom directly
+            if not old_html and intercom_id:
+                intercom_result = self.intercom_service.get_article(intercom_id)
+                old_html = intercom_result.get('html', '')
+
             return {
                 'status': 'preview',
                 'article_type': 'data_field',
@@ -1188,7 +1323,7 @@ class WorkflowOrchestrator:
 
         # Step 6: Log to Google Sheets
         print(f"      [6/6] Logging to Google Sheets...")
-        log_result = self.google_sheets_service.log_processed_item(
+        self.google_sheets_service.log_processed_item(
             original_name=field_name,
             human_name=human_name,
             intercom_url=intercom_result['article_url'],

@@ -117,7 +117,7 @@ class DataFieldAnalyzer:
         text = re.sub(r'\[[^\]]+\.[^\]]+\]\.', '', text)
 
         # C. Remove aggregation prefixes and suffixes
-        text = re.sub(r'\b(sum|none|avg|min|max|attr|usr|tmn|pcto):', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\b(sum|none|avg|min|max|attr|usr|tmn|pcto|mn):', '', text, flags=re.IGNORECASE)
         text = re.sub(r':(qk|nk|ok)', '', text, flags=re.IGNORECASE)
         text = re.sub(r':[0-9]+', '', text)
 

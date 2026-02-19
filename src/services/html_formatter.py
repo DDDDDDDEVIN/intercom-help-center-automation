@@ -286,35 +286,42 @@ class HTMLFormatter:
         html_parts = []
 
         def clean_field_and_link(val):
-            """Helper to process field names and create links"""
+            """Helper to process field names and create links.
+            Items may be plain strings or {'field': str, 'display_name': str|None} dicts.
+            Label priority: display_name > field_mapping human name > raw field name.
+            Link comes from field_mapping when available.
+            Deduplicates by label before rendering.
+            """
             if not val:
                 return ""
 
-            # Handle list or string
-            items = []
-            if isinstance(val, list):
-                items = val
-            else:
-                items = str(val).split(',')
+            items = val if isinstance(val, list) else str(val).split(',')
 
+            seen_labels = set()
             processed_items = []
             for item in items:
-                raw_key = str(item).strip()
-                if not raw_key:
-                    continue
-
-                # Lookup in field mapping
-                if raw_key in field_mapping:
-                    record = field_mapping[raw_key]
-                    human_text = record.get('human', raw_key)
-                    link = record.get('url', '')
-
-                    if link:
-                        processed_items.append(f'<a href="{link}">{human_text}</a>')
-                    else:
-                        processed_items.append(human_text)
+                if isinstance(item, dict):
+                    field_key = item.get('field', '').strip()
+                    display_name = item.get('display_name')
                 else:
-                    processed_items.append(raw_key)
+                    field_key = str(item).strip()
+                    display_name = None
+
+                # Resolve label and link
+                if field_key and field_key in field_mapping:
+                    record = field_mapping[field_key]
+                    label = display_name if display_name else record.get('human', field_key)
+                    link = record.get('url', '')
+                    html_item = f'<a href="{link}">{label}</a>' if link else label
+                else:
+                    label = display_name if display_name else field_key
+                    html_item = label
+
+                # Skip blanks, "None" strings, and duplicates
+                if not label or label.lower() == 'none' or label in seen_labels:
+                    continue
+                seen_labels.add(label)
+                processed_items.append(html_item)
 
             return ", ".join(processed_items)
 
