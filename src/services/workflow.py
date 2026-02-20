@@ -801,6 +801,7 @@ class WorkflowOrchestrator:
 
         # Step 5: Analyze with ChatGPT and extract field names
         print(f"  [5/6] Analyzing with ChatGPT...")
+        print(f"\n[DEBUG] Chart XML context sent to GPT:\n{'-'*60}\n{xml_result['analysis_context']}\n{'-'*60}\n")
 
         analysis_result = self.chatgpt_service.analyze_chart(
             chart_image_url=chart['image_url'],
@@ -865,17 +866,6 @@ class WorkflowOrchestrator:
                 ):
                     print(f"\n    [Field {idx}/{field_contexts_result['total_count']}] {field_name}")
 
-                    # Skip fields not found in Tableau metadata — these are GPT hallucinations
-                    # (visual axis labels, not real Tableau field names)
-                    if field_context.strip() == "Field not found in metadata":
-                        print(f"    ⊘ Skipping: field '{field_name}' is not a real Tableau field (not in XML metadata)")
-                        skipped_fields.append({
-                            'field_name': field_name,
-                            'reason': 'Field not found in Tableau metadata',
-                            'human_name': field_name
-                        })
-                        continue
-
                     # Resolve display_name: try exact key first, then normalized key
                     norm_key = field_name.lower().replace(' ', '').replace('-', '')
                     resolved_display_name = (
@@ -925,6 +915,7 @@ class WorkflowOrchestrator:
             'Dimensions': [],
             'Measures': []
         }
+        field_mapping = {}  # Initialize to prevent NameError if no fields are extracted
         # Create chart if there are any fields (processed or skipped)
         if processed_fields or skipped_fields:
             print(f"\n  [7/7] Creating detailed chart article...")
@@ -977,23 +968,6 @@ class WorkflowOrchestrator:
 
             # Clean field names in chart JSON (remove Tableau prefixes)
             chart_json = self._clean_chart_json_fields(chart_json)
-
-            # Remove fields not found in Tableau metadata from chart HTML
-            # These are GPT visual labels (e.g. axis titles) mistaken for field names
-            fields_not_in_metadata = {
-                f['field_name'].lower().replace(' ', '').replace('-', '')
-                for f in skipped_fields
-                if f.get('reason') == 'Field not found in Tableau metadata'
-            }
-            if fields_not_in_metadata:
-                for key in ('Vertical', 'Horizontal', 'Dimensions', 'Measures'):
-                    val = chart_json.get(key)
-                    if isinstance(val, list):
-                        chart_json[key] = [
-                            item for item in val
-                            if isinstance(item, dict)
-                            and item.get('field', '').lower().replace(' ', '').replace('-', '') not in fields_not_in_metadata
-                        ]
 
             # Query existing relationships for preview mode
             related_articles_names = None
@@ -1226,11 +1200,12 @@ class WorkflowOrchestrator:
                 field_name=field_name,
                 field_context=field_context
             )
-            if name_rewrite['status'] == 'success':
+            if name_rewrite['status'] == 'success' and name_rewrite.get('human_name'):
                 human_name = name_rewrite['human_name']
 
         # Step 3: Analyze field with ChatGPT (human_name now always available)
         print(f"      [3/6] Analyzing field...")
+        print(f"\n[DEBUG] Field context sent to GPT for '{field_name}':\n{'-'*60}\n{field_context}\n{'-'*60}\n")
         field_analysis = self.chatgpt_service.analyze_data_field(
             field_name=field_name,
             field_context=field_context,

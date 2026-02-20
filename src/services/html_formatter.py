@@ -517,7 +517,7 @@ class HTMLFormatter:
         else:
             # Insert before final <hr> divider
             if '<hr>' in existing_html:
-                return existing_html.replace('<hr>', related_section + '<hr>')
+                return existing_html.replace('<hr>', related_section + '<hr>', 1)
             else:
                 # No divider, append to end
                 return existing_html + '\n' + related_section

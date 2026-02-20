@@ -38,7 +38,7 @@ class JoomlaService:
             headers['X-Joomla-Token'] = self.api_token
 
         try:
-            response = requests.get(url, headers=headers, timeout=30)
+            response = requests.get(url, headers=headers, timeout=60)
             response.raise_for_status()
 
             data = response.json()
@@ -80,7 +80,7 @@ class JoomlaService:
             headers['X-Joomla-Token'] = self.api_token
 
         try:
-            response = requests.get(url, headers=headers, timeout=30)
+            response = requests.get(url, headers=headers, timeout=60)
             response.raise_for_status()
 
             data = response.json()
@@ -234,7 +234,7 @@ class JoomlaService:
             headers['X-Joomla-Token'] = self.api_token
 
         try:
-            response = requests.get(url, headers=headers, timeout=30)
+            response = requests.get(url, headers=headers, timeout=60)
             response.raise_for_status()
 
             data = response.json()

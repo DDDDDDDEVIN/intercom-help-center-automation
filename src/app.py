@@ -202,7 +202,7 @@ def get_published_articles():
             os.getenv('GOOGLE_SHEETS_API_URL'),
             params=params,
             allow_redirects=True,
-            timeout=30
+            timeout=60
         )
 
         if response.status_code == 200:

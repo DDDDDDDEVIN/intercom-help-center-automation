@@ -2,6 +2,7 @@
 Intercom Service
 Publishes content to Intercom Help Center
 """
+import time
 import requests
 from typing import Dict
 
@@ -31,6 +32,46 @@ class IntercomService:
         self.chart_collection_id = chart_collection_id or collection_id
         self.article_collection_id = article_collection_id or collection_id
         self.base_url = "https://api.intercom.io"
+
+    def _request_with_retry(self, method: str, url: str, headers: dict, json: dict = None, timeout: int = 30, max_retries: int = 3, retry_delay: float = 2.0):
+        """
+        Make an HTTP request with retry logic on failure
+
+        Args:
+            method: HTTP method ('post', 'put', 'get', 'delete')
+            url: Request URL
+            headers: Request headers
+            json: Request JSON body (optional)
+            timeout: Request timeout in seconds
+            max_retries: Maximum number of attempts (default 3)
+            retry_delay: Seconds to wait between retries (default 2)
+
+        Returns:
+            requests.Response object
+
+        Raises:
+            requests.exceptions.RequestException: If all retries are exhausted
+        """
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = requests.request(method, url, headers=headers, json=json, timeout=timeout)
+                response.raise_for_status()
+                return response
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                response_body = ""
+                if hasattr(e, 'response') and e.response is not None:
+                    try:
+                        response_body = f"\n  [Intercom] Response body: {e.response.text}"
+                    except Exception:
+                        pass
+                if attempt < max_retries:
+                    print(f"  [Intercom] Request failed (attempt {attempt}/{max_retries}): {str(e)}{response_body} — retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                else:
+                    print(f"  [Intercom] Request failed after {max_retries} attempts: {str(e)}{response_body}")
+        raise last_error
 
     def create_article(
         self,
@@ -79,13 +120,7 @@ class IntercomService:
             payload["author_id"] = author_id
 
         try:
-            response = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=30
-            )
-            response.raise_for_status()
+            response = self._request_with_retry('post', url, headers=headers, json=payload, timeout=30)
 
             data = response.json()
 
@@ -125,7 +160,8 @@ class IntercomService:
         headers = {
             "Authorization": f"Bearer {self.api_token}",
             "Content-Type": "application/json",
-            "Accept": "application/json"
+            "Accept": "application/json",
+            "Intercom-Version": "2.14"
         }
 
         payload = {}
@@ -137,20 +173,14 @@ class IntercomService:
             payload["state"] = state
 
         try:
-            response = requests.put(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=30
-            )
-            response.raise_for_status()
+            response = self._request_with_retry('put', url, headers=headers, json=payload, timeout=30)
 
             data = response.json()
 
             return {
                 "status": "success",
                 "article_id": data.get("id"),
-                "article_url": data.get("url")
+                "article_url": data.get("url") or f"https://help.intercom.com/articles/{data.get('id')}"
             }
 
         except requests.exceptions.RequestException as e:
@@ -192,7 +222,7 @@ class IntercomService:
                     url,
                     headers=headers,
                     params=params,
-                    timeout=30
+                    timeout=60
                 )
                 response.raise_for_status()
 
@@ -258,7 +288,7 @@ class IntercomService:
                     url,
                     headers=headers,
                     params=params,
-                    timeout=30
+                    timeout=60
                 )
                 response.raise_for_status()
 
@@ -350,7 +380,7 @@ class IntercomService:
             response = requests.delete(
                 url,
                 headers=headers,
-                timeout=30
+                timeout=60
             )
             response.raise_for_status()
 

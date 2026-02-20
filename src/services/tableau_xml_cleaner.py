@@ -43,7 +43,7 @@ class TableauXMLCleaner:
         }
 
         try:
-            response = requests.get(url, headers=headers, stream=True, timeout=45)
+            response = requests.get(url, headers=headers, stream=True, timeout=90)
             response.raise_for_status()
 
             # Extract XML from ZIP or direct response
@@ -140,7 +140,7 @@ class TableauXMLCleaner:
         text = re.sub(r'\[[^\]]+\.[^\]]+\]\.', '', text)
 
         # C. Clean prefixes and suffixes
-        text = re.sub(r'\b(sum|none|avg|min|max|attr|usr|tmn|pcto|win|med|pcdf|mn):', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\b(sum|none|avg|min|max|attr|usr|tmn|pcto|win|med|pcdf|mn|yr|tqr|io):', '', text, flags=re.IGNORECASE)
         text = re.sub(r':(qk|nk|ok)', '', text)
         text = re.sub(r':[0-9]+', '', text)
 
@@ -174,8 +174,8 @@ class TableauXMLCleaner:
                     continue
                 seen_sheets.add(sheet_name)
 
-                # Extract title
-                title = "No Title"
+                # Extract title - fall back to sheet name so GPT doesn't skip it
+                title = sheet_name  # Use sheet name as default instead of "No Title"
                 title_node = ws.find('.//title//run')
                 if title_node is not None and title_node.text:
                     title = title_node.text

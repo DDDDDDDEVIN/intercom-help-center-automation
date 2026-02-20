@@ -117,7 +117,7 @@ class DataFieldAnalyzer:
         text = re.sub(r'\[[^\]]+\.[^\]]+\]\.', '', text)
 
         # C. Remove aggregation prefixes and suffixes
-        text = re.sub(r'\b(sum|none|avg|min|max|attr|usr|tmn|pcto|mn):', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\b(sum|none|avg|min|max|attr|usr|tmn|pcto|win|med|pcdf|mn|yr|tqr|io):', '', text, flags=re.IGNORECASE)
         text = re.sub(r':(qk|nk|ok)', '', text, flags=re.IGNORECASE)
         text = re.sub(r':[0-9]+', '', text)
 
@@ -165,7 +165,7 @@ class DataFieldAnalyzer:
         }
 
         try:
-            response = requests.get(url, headers=headers, stream=True, timeout=45)
+            response = requests.get(url, headers=headers, stream=True, timeout=90)
             response.raise_for_status()
 
             workbook_xml = ""

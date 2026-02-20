@@ -40,7 +40,7 @@ class TableauService:
         }
 
         try:
-            response = requests.post(url, data=payload, headers=headers, timeout=30)
+            response = requests.post(url, data=payload, headers=headers, timeout=60)
             response.raise_for_status()
 
             xml_string = response.text

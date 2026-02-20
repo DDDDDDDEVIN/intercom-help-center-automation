@@ -45,7 +45,7 @@ class GoogleSheetsService:
                 self.sheet_api_url,
                 params=params,
                 allow_redirects=True,
-                timeout=30
+                timeout=60
             )
 
             # Safety Check 2: HTTP request failed
@@ -123,7 +123,7 @@ class GoogleSheetsService:
                     self.sheet_api_url,
                     params=params,
                     allow_redirects=True,
-                    timeout=30
+                    timeout=60
                 )
 
                 if response.status_code == 200:
@@ -187,7 +187,7 @@ class GoogleSheetsService:
                 self.sheet_api_url,
                 json=payload,
                 allow_redirects=True,
-                timeout=30
+                timeout=60
             )
 
             if response.status_code == 200:
@@ -240,7 +240,7 @@ class GoogleSheetsService:
                 self.sheet_api_url,
                 json=payload,
                 allow_redirects=True,
-                timeout=30
+                timeout=60
             )
 
             if response.status_code == 200:
@@ -297,7 +297,7 @@ class GoogleSheetsService:
                 self.sheet_api_url,
                 params=params,
                 allow_redirects=True,
-                timeout=30
+                timeout=60
             )
 
             if response.status_code != 200:
@@ -384,7 +384,7 @@ class GoogleSheetsService:
                 self.sheet_api_url,
                 params=params,
                 allow_redirects=True,
-                timeout=30
+                timeout=60
             )
 
             if response.status_code != 200:
@@ -433,7 +433,7 @@ class GoogleSheetsService:
                 self.sheet_api_url,
                 params=params,
                 allow_redirects=True,
-                timeout=30
+                timeout=60
             )
 
             if response.status_code != 200:

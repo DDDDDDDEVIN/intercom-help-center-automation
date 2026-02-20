@@ -2,6 +2,7 @@
 ChatGPT Analysis Service
 Sends chart data and context to ChatGPT for analysis
 """
+import re
 import requests
 import json
 from typing import Dict, List
@@ -118,7 +119,7 @@ JSON Structure:
                     "content": [
                         {
                             "type": "text",
-                            "text": "The metadata is {chart_context}, the chart image is attatched"
+                            "text": f"The metadata is {chart_context}, the chart image is attached"
                         },
                         {
                             "type": "image_url",
@@ -138,7 +139,7 @@ JSON Structure:
                 self.api_url,
                 headers=headers,
                 json=payload,
-                timeout=300
+                timeout=600
             )
             response.raise_for_status()
 
@@ -233,6 +234,23 @@ JSON Structure:
                 seen[norm_key] = item
 
         final_items = list(seen.values())
+
+        # Post-process truncated display_names (ending with '...')
+        # If the prefix before '...' is part of the field name → use the full field name
+        # Otherwise → discard the display_name (set to None) as it's unreliable
+        for item in final_items:
+            dn = item['display_name']
+            if dn and re.search(r'\.{2,}$', dn):
+                prefix = re.sub(r'\.{2,}$', '', dn).strip()  # Strip 2+ trailing dots and whitespace
+                # Require at least 10 chars to avoid false positives from very short prefixes
+                # Use case-insensitive comparison since display names and field names may differ in casing
+                if len(prefix) >= 10 and prefix.lower() in item['field'].lower():
+                    item['display_name'] = item['field']
+                    print(f"[GPT] Resolved truncated display_name: '{dn}' → '{item['field']}'")
+                else:
+                    item['display_name'] = None
+                    print(f"[GPT] Discarded truncated display_name: '{dn}' (not part of field '{item['field']}')")
+
         field_names = [item['field'] for item in final_items]
         display_name_map = {item['field']: item['display_name'] for item in final_items}
 
@@ -328,7 +346,7 @@ Output Format: Return ONLY a valid JSON object. Do not wrap it in markdown code 
                 self.api_url,
                 headers=headers,
                 json=payload,
-                timeout=300
+                timeout=600
             )
             response.raise_for_status()
 
@@ -433,7 +451,7 @@ Output Format: Return ONLY a valid JSON object. Do not wrap it in markdown code 
                 self.api_url,
                 headers=headers,
                 json=payload,
-                timeout=300
+                timeout=600
             )
             response.raise_for_status()
 
@@ -453,7 +471,7 @@ Output Format: Return ONLY a valid JSON object. Do not wrap it in markdown code 
             # Parse JSON response
             try:
                 parsed = json.loads(content)
-                rewritten_name = parsed.get('human_name', content)
+                rewritten_name = parsed.get('human_name') or content
             except (json.JSONDecodeError, ValueError):
                 # Fallback: if not JSON, use the raw content
                 rewritten_name = content

@@ -1,258 +1,209 @@
 # Intercom Help Center Automation
 
-Automated workflow to process Joomla articles, analyze Tableau charts with ChatGPT, and publish to Intercom.
+Automates the creation and maintenance of a structured Intercom Help Center from Joomla articles containing Tableau charts. Given a Joomla article ID, the system extracts chart data, analyzes each chart and its underlying data fields using GPT, and publishes three layers of linked articles in Intercom.
 
-## Overview
+---
 
-This automation replaces a Zapier workflow that had limitations with parallel loops and list separation. The workflow:
+## What It Does
 
-1. **Receives webhook** - Triggered by HTTP POST with article ID
-2. **Downloads article** - Fetches HTML content from Joomla API
-3. **Cleans HTML** - Extracts article metadata (title, country, technology, category) and chart information
-4. **Authenticates with Tableau** - Signs in to get auth token and site ID
-5. **Processes charts** - Loops through each chart to:
-   - Check for duplicates
-   - Find workbook ID
-   - Download workbook XML
-   - Extract data fields
-   - Send to ChatGPT for analysis
-   - Format as HTML and publish to Intercom
-   - Extract and analyze formulas
+1. **Downloads** a Joomla article and parses its embedded Tableau chart images
+2. **Analyzes** each chart by downloading its Tableau workbook XML and sending the chart image + XML context to GPT
+3. **Documents** each data field used in the charts — definition, calculation logic, formula, and filter values
+4. **Publishes** three types of Intercom articles:
+   - **Data Dictionary** — one article per data field
+   - **Chart Library** — one article per chart, with linked data fields
+   - **Article Library** — one summary article per Joomla article, with linked charts
+5. **Links** everything bidirectionally: data fields link to charts that use them; charts link back to the articles they appear in
 
-## Setup
+---
 
-### Prerequisites
+## Tech Stack
 
-- Python 3.9 or higher
-- pip (Python package manager)
-- Access to:
-  - Joomla API
-  - Tableau Server
-  - Intercom API
-  - OpenAI API (ChatGPT)
+- **Python / Flask** — backend API and webhook server
+- **OpenAI GPT** — chart image analysis, field documentation, name rewriting
+- **Tableau REST API** — workbook download and XML parsing
+- **Intercom API** — article creation and updates
+- **Joomla REST API** — source article download
+- **Google Apps Script** — simple REST API over Google Sheets for logging and duplicate checking
 
-### Installation
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd intercom-help-center-automation
-```
-
-2. Create a virtual environment:
-```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-4. Configure environment variables:
-```bash
-cp .env.example .env
-# Edit .env with your credentials
-```
-
-### Environment Variables
-
-Edit `.env` with your configuration:
-
-```env
-# Server Configuration
-PORT=5000
-
-# Joomla API Configuration
-JOOMLA_BASE_URL=https://rocket.sunwiz.com.au
-JOOMLA_API_ENDPOINT=/api/articles
-JOOMLA_API_TOKEN=your_joomla_token
-
-# Tableau Configuration
-TABLEAU_SERVER_URL=https://your-tableau-server.com
-TABLEAU_USERNAME=your_username
-TABLEAU_PASSWORD=your_password
-TABLEAU_SITE_NAME=your_site_name
-TABLEAU_GLOBAL_PROJECT_ID=70ceb8ae-d377-4341-a62f-32f4c150f601
-
-# Google Sheets Configuration (for duplicate checking)
-GOOGLE_SHEETS_API_URL=https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec
-GOOGLE_SHEETS_SHEET_NAME=Sheet1
-
-# OpenAI/ChatGPT Configuration
-OPENAI_API_KEY=your_openai_key
-OPENAI_MODEL=gpt-4
-
-# Intercom Configuration
-INTERCOM_API_TOKEN=your_intercom_token
-INTERCOM_COLLECTION_ID=your_collection_id
-```
-
-## Usage
-
-### Running the Server
-
-```bash
-python src/app.py
-```
-
-The server will start on `http://localhost:5000` (or the port specified in `.env`).
-
-### Triggering the Workflow
-
-Send a POST request to the webhook endpoint:
-
-```bash
-curl -X POST http://localhost:5000/webhook \
-  -H "Content-Type: application/json" \
-  -d '{"article_id": "123"}'
-```
-
-### Health Check
-
-```bash
-curl http://localhost:5000/health
-```
+---
 
 ## Project Structure
 
 ```
 intercom-help-center-automation/
 ├── src/
-│   ├── app.py                           # Flask app with webhook endpoint
+│   ├── app.py                       # Flask app, all API routes
 │   └── services/
-│       ├── __init__.py
-│       ├── workflow.py                  # Workflow orchestrator (nested loops)
-│       ├── joomla_service.py            # Joomla API integration
-│       ├── html_cleaner.py              # HTML parsing & extraction
-│       ├── tableau_service.py           # Tableau auth & workbook search
-│       ├── google_sheets_service.py     # Duplicate checking & logging
-│       ├── tableau_xml_cleaner.py       # Chart XML processing
-│       ├── data_field_analyzer.py       # Field context extraction
-│       ├── chatgpt_service.py           # AI analysis (charts & fields)
-│       ├── html_formatter.py            # HTML formatting for Intercom
-│       └── intercom_service.py          # Intercom Help Center publishing
-├── requirements.txt
-├── .env.example
-├── .gitignore
-├── README.md
-└── IMPLEMENTATION_SUMMARY.md            # Detailed technical docs
+│       ├── workflow.py              # Main orchestrator (publish & update flows)
+│       ├── joomla_service.py        # Joomla API — fetch articles
+│       ├── html_cleaner.py          # Parse Joomla HTML → chart list + metadata
+│       ├── tableau_service.py       # Tableau auth + workbook search
+│       ├── tableau_xml_cleaner.py   # Download workbook XML, extract chart structure
+│       ├── data_field_analyzer.py   # Extract deep field context from XML
+│       ├── chatgpt_service.py       # GPT: chart analysis, field docs, name rewriting
+│       ├── html_formatter.py        # Build Intercom HTML from GPT output
+│       ├── intercom_service.py      # Intercom: create / update / delete articles
+│       ├── google_sheets_service.py # Google Sheets: log rows, check duplicates
+│       └── relationship_service.py  # Post-publish: inject bidirectional links
+├── WORKFLOW-LOGIC.md                # Detailed step-by-step logic reference
+├── TODO.md                          # Known bugs and improvement backlog
+├── README.md                        # This file
+└── requirements.txt
 ```
 
-## Current Implementation Status
+---
 
-### ✅ Fully Completed - All Steps Implemented!
+## Setup
 
-**Initial Processing:**
-- ✅ Step 1: Webhook endpoint to receive article ID
-- ✅ Step 2: Download article from Joomla API
-- ✅ Step 3: HTML cleaning and metadata extraction
-- ✅ Step 4: Tableau authentication
-- ✅ Step 5: Extract auth token and site ID
+### Prerequisites
 
-**Chart Processing Loop (for each chart):**
-- ✅ Step 6: Check for duplicate charts (Google Sheets)
-- ✅ Step 7: Search workbook by Tableau name
-- ✅ Step 8: Select workbook ID by Global Project ID
-- ✅ Step 9: Download workbook XML
-- ✅ Step 10: Extract and clean chart data fields from XML
-- ✅ Step 11: Send chart to ChatGPT for analysis
-- ✅ Step 12: Extract field names from GPT response
+- Python 3.10+
+- OpenAI API key with GPT-4 vision access
+- Tableau Server or Tableau Cloud with REST API access
+- Joomla site with REST API enabled
+- Intercom workspace with Help Center enabled and three collections created
+- Google Sheet with a Google Apps Script web app deployed
 
-**Data Field Processing Loop (for each field in each chart):**
-- ✅ Step 13: Extract detailed field context from XML (formulas, dependencies, values)
-- ✅ Step 14: Check for duplicate fields in Google Sheets (data_dictionary)
-- ✅ Step 15: Analyze field with ChatGPT
-- ✅ Step 16: Rewrite field name to human-readable format
-- ✅ Step 17: Format analysis as HTML
-- ✅ Step 18: Publish field to Intercom Help Center
-- ✅ Step 19: Log processed field to Google Sheets
-
-**Chart HTML Creation (after processing all fields in chart):**
-- ✅ Step 20: Batch lookup field URLs from Google Sheets
-- ✅ Step 21: Create chart HTML with linked fields
-- ✅ Step 22: Publish chart article to Intercom
-
-**Article HTML Creation (after processing all charts):**
-- ✅ Step 23: Aggregate all chart URLs
-- ✅ Step 24: Create article HTML with chart links
-- ✅ Step 25: Publish article to Intercom
-
-## API Endpoints
-
-### POST /webhook
-Trigger the automation workflow
-
-**Request:**
-```json
-{
-  "article_id": "123"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "article_id": "123",
-  "result": {
-    "article_title": "Analysis Report",
-    "category": "Residential",
-    "technology": "Solar PV",
-    "total_charts": 10,
-    "processed_charts": 8,
-    "skipped_charts": 2,
-    "article_intercom_url": "https://help.intercom.com/articles/main-article-123",
-    "charts_data": [
-      {
-        "status": "success",
-        "chart": {...},
-        "workbook_id": "abc123",
-        "extracted_fields": ["Field1", "Field2"],
-        "processed_fields": 2,
-        "skipped_fields": 0,
-        "chart_intercom_url": "https://help.intercom.com/articles/chart-456",
-        "fields_data": [
-          {
-            "field_name": "Field1",
-            "human_name": "Customer Count",
-            "intercom_url": "https://help.intercom.com/articles/field-789",
-            "intercom_article_id": "789"
-          }
-        ]
-      }
-    ],
-    "skipped_data": [...]
-  }
-}
-```
-
-### GET /health
-Health check endpoint
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "service": "intercom-help-center-automation"
-}
-```
-
-## Development
-
-### Running in Development Mode
-
-The Flask app runs with debug mode enabled by default:
+### Installation
 
 ```bash
-python src/app.py
+git clone <repo-url>
+cd intercom-help-center-automation
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### Adding New Steps
+### Environment Variables
 
-To add new workflow steps, update `src/services/workflow.py` and create new service modules as needed.
+Create a `.env` file in the project root:
 
-## License
+```env
+# Joomla
+JOOMLA_BASE_URL=https://yoursite.com
+JOOMLA_API_ENDPOINT=/api/index.php/v1/content/articles
+JOOMLA_API_TOKEN=your_joomla_token
+JOOMLA_CATEGORY_ID=227
 
-MIT
+# Tableau
+TABLEAU_SERVER_URL=https://your-tableau-server.com
+TABLEAU_USERNAME=your_username
+TABLEAU_PASSWORD=your_password
+TABLEAU_SITE_NAME=your_site_name
+TABLEAU_GLOBAL_PROJECT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# OpenAI
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o
+OPENAI_TEXT_MODEL=gpt-4o
+OPENAI_IMAGE_DETAIL=high
+
+# Intercom
+INTERCOM_API_TOKEN=your_intercom_token
+INTERCOM_COLLECTION_ID=default_collection_id
+INTERCOM_DATA_DICT_COLLECTION_ID=data_dictionary_collection_id
+INTERCOM_CHART_COLLECTION_ID=chart_library_collection_id
+INTERCOM_ARTICLE_COLLECTION_ID=article_library_collection_id
+INTERCOM_AUTHOR_ID=your_author_id
+
+# Google Sheets (via GAS web app)
+GOOGLE_SHEETS_API_URL=https://script.google.com/macros/s/.../exec
+GOOGLE_SHEETS_DATA_DICT_SHEET=data_dictionary
+GOOGLE_SHEETS_CHART_LIBRARY_SHEET=chart_library
+GOOGLE_SHEETS_ARTICLE_LIBRARY_SHEET=article_library
+
+PORT=5000
+```
+
+### Google Sheets Setup
+
+Each of the three sheets (`data_dictionary`, `chart_library`, `article_library`) must have these columns in order:
+
+| A | B | C | D | E |
+|---|---|---|---|---|
+| original_name | human_name | intercom_url | intercom_id | html |
+
+Deploy a Google Apps Script web app with `doGet` (returns all rows as JSON) and `doPost` (appends rows or deletes by value) handlers. See `WORKFLOW-LOGIC.md` for the expected request/response format.
+
+---
+
+## Running
+
+```bash
+cd src
+python app.py
+```
+
+Server starts at `http://localhost:5000`.
+
+---
+
+## API Reference
+
+### Publish new articles
+```
+POST /api/articles/create
+{ "article_ids": ["123", "456"] }
+```
+Runs the full publish pipeline for each Joomla article ID. Already-published charts and data fields are skipped (duplicate detection via Google Sheets).
+
+### Preview changes before updating
+```
+POST /api/articles/update
+{ "article_ids": ["123"], "preview": true }
+```
+Regenerates all content without writing anything. Returns `old_html` / `new_html` pairs for side-by-side review in the UI.
+
+### Apply updates
+```
+POST /api/articles/update
+{ "article_ids": ["123"], "preview": false }
+```
+Regenerates and overwrites existing articles in Intercom and Google Sheets.
+
+### Confirm selected preview changes
+```
+POST /api/articles/update/confirm
+{ "updates": [{ "article_title": "...", "article_type": "chart|data_field|main_article", "intercom_article_id": "...", "html": "...", "collection_id": "..." }] }
+```
+Applies a specific subset of changes from a preview session.
+
+### List published Intercom articles
+```
+GET /api/intercom/articles
+```
+Returns all articles grouped by collection (Article Library, Chart Library, Data Dictionary).
+
+### Delete articles
+```
+POST /api/intercom/articles/delete
+{ "articles": [{ "id": "123", "title": "...", "collection": "Chart Library" }] }
+```
+Deletes from both Intercom and Google Sheets.
+
+### List Joomla articles
+```
+GET /api/joomla/articles
+```
+Returns published Joomla articles filtered by the configured Global category.
+
+### Web UI
+```
+GET /articles
+```
+Browser-based interface for selecting and publishing articles.
+
+---
+
+## Key Design Decisions
+
+**Google Sheets as an HTML cache** — The full HTML of every published article is stored in Google Sheets. This avoids re-calling GPT when adding relationship links to existing articles.
+
+**Relationships injected after publishing** — Intercom URLs only exist after an article is published. All relationship links are added in a second pass once every article in the batch has a URL.
+
+**Duplicate detection by original name** — Charts are registered by their raw Tableau name (before title-case formatting). This survives reformatting between runs.
+
+**GPT field identification** — GPT vision reads the actual chart image and matches visible labels to Tableau XML metadata. This handles cases where fields appear under different display names on different charts.
+
+For detailed step-by-step logic, see [WORKFLOW-LOGIC.md](WORKFLOW-LOGIC.md).
